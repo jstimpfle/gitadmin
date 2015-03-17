@@ -32,8 +32,17 @@ Usage:
         gitadmin -c COMMAND
         gitadmin --init
 
-In the second case, COMMAND is split at whitespace and interpreted as
-the first case, e.g. use like this: gitadmin -c 'gitadmin root'
+In the first case, the user is dropped into an interactive shell if
+no cmd is given. If cmd is given, it is interpreted as in the shell.
+cmd must be given as multiple arguments, pre-split. Example usage from a shell:
+gitadmin root create_user john John
+
+In the second case, COMMAND is a single argument which will be split at
+whitespace and interpreted as the first case, i.e. use like this from a shell:
+gitadmin -c 'gitadmin root create_user john John'
+
+In the third case, initialize a new gitadmin environment. gitadmin will abort
+if an existing environment is found.
 """
 
 shell_intro = """
@@ -52,8 +61,8 @@ Available user commands:
   domains
   perms
   sshkeys
-  add_sshkey ALGO KEY COMMENT
-  remove_sshkey ALGO KEY COMMENT
+  add_sshkey
+  remove_sshkey
 
 Available domain admin commands:
 
@@ -182,7 +191,6 @@ class GitAdminShell(cmd.Cmd):
             if is_interactive:
                 print()
             sys.exit(0)
-
         try:
             exec_cmdline(line)
         except GAError as e:
@@ -322,7 +330,6 @@ def need_domain_id(domain):
 
     if not rs:
         raise GAError("domain does not exist: {}".format(domain))
-
     return rs[0][0]
 
 def need_user_id(user):
@@ -389,7 +396,6 @@ def need_read_permission(domain, repo):
         raise Unauthorized("You don't have permission to read from {}/{}"
                            .format(domain, repo))
 
-
 def need_write_permission(domain, repo):
     repoid = need_repo_id(domain, repo)
 
@@ -433,7 +439,6 @@ def transaction(cmd):
             raise
         conn.execute('COMMIT')
         return r
-
     return func
 
 def do_command_helper(cmd):
@@ -443,51 +448,41 @@ def do_command_helper(cmd):
 
 def transactionless_rootcmd(cmd):
     do_command_helper(cmd)
-
     def func(*args, **kwargs):
         need_is_root()
         return cmd(*args, **kwargs)
-
     root_cmds[cmd.__name__] = func
 
 def rootcmd(cmd):
     do_command_helper(cmd)
-
     @transaction
     def func(*args, **kwargs):
         need_is_root()
         return cmd(*args, **kwargs)
-
     root_cmds[cmd.__name__] = func
 
 def domaincmd(cmd):
     do_command_helper(cmd)
-
     @transaction
     def func(domain, *args, **kwargs):
         need_domain_id(domain)
         if not is_root:
             need_is_domain_admin(domain)
         return cmd(domain, *args, **kwargs)
-
     domain_cmds[cmd.__name__] = func
 
 def usercmd(cmd):
     do_command_helper(cmd)
-
     @transaction
     def func(*args, **kwargs):
         return cmd(*args, **kwargs)
-
     user_cmds[cmd.__name__] = func
 
 def dflcmd(cmd):
     do_command_helper(cmd)
-
     @transaction
     def func(*args, **kwargs):
         return cmd(*args, **kwargs)
-
     user_cmds[cmd.__name__] = func
 
 @dflcmd
@@ -549,6 +544,7 @@ def sshkeys():
     rs = conn.execute('SELECT S.algo, S.key, S.comment '
                       'FROM   sshkey S '
                       'WHERE  S.userid = ?', (loguid,))
+
     for r in rs:
         print(' '.join(r))
 
@@ -573,6 +569,7 @@ def remove_sshkey():
               'just as returned by "sshkeys"')
     line = sys.stdin.readline()
     algo, key, comment = need_valid_sshkey(line)
+
     conn.execute('DELETE FROM sshkey '
                  'WHERE userid = ? AND algo = ? AND key = ? AND comment = ?',
                  (loguid, algo, key, comment))
@@ -596,6 +593,7 @@ def admins(domain):
         WHERE
                 D.id = ?
     """, (domainid,))
+
     for r in rs:
         print('{}\t{}'.format(*r))
 
@@ -606,6 +604,7 @@ def repos(domain):
 
     rs = conn.execute('SELECT R.name FROM repo R WHERE R.domainid = ?',
                       (domainid,))
+
     for r in rs:
         print(r[0])
 
@@ -631,6 +630,7 @@ def repoperms(domain, repo):
         WHERE
                 R.id = ?
     """, (repoid,))
+
     for r in rs:
         print('\t'.join(r))
 
@@ -657,8 +657,7 @@ def delete_repo(domain, repo):
 def set_domain_admin(domain, user):
     domainid = need_domain_id(domain)
     userid = need_user_id(user)
-
-    if user == 'root':
+    if is_root:
         print("Refusing to explicitly add the root admin as domain admin",
                 file=sys.stderr)
         return
@@ -676,14 +675,12 @@ def unset_domain_admin(domain, user):
 
 @domaincmd
 def set_user_perm(domain, repo, user, perm):
-    if user == 'root':
+    if is_root:
         print("No need to add permissions for the root admin", file=sys.stderr)
         return
-
     repoid = need_repo_id(domain, repo)
     userid = need_user_id(user)
     mode = { 'none': -1, 'R': 0, 'RW': 1 }.get(perm)
-
     if mode is None:
         raise InvalidArgument(
                    "Usage: set_user_perm DOMAIN REPO USER <none|R|RW>")
@@ -747,12 +744,13 @@ def create_user(user, fullname):
 @rootcmd
 def delete_user(user):
     userid = need_user_id(user)
+
     conn.execute('DELETE FROM sshkey WHERE userid = ?', (userid,))
     conn.execute('DELETE FROM admin WHERE userid = ?', (userid,))
     conn.execute('DELETE FROM permissions WHERE userid = ?', (userid,))
     conn.execute('DELETE FROM user WHERE id = ?', (userid,))
-    warn_unadministered_domains()
 
+    warn_unadministered_domains()
     write_ssh_authorized_keys()
 
 def exec_cmd(cmd):
