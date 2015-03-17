@@ -11,7 +11,7 @@ config = {
     'basedir':
         os.path.join(os.getenv('HOME'), 'basedir'),  # XXX
     'authorized_keys':
-        os.path.join(os.getenv('HOME'), 'authorized_keys')  # XXX
+        os.path.join(os.getenv('HOME'), '.ssh/authorized_keys')  # XXX
 }
 
 conn = None
@@ -75,6 +75,8 @@ Available root admin commands:
   create_user USER FULLNAME
   delete_user USER
 """
+
+authorized_keys_header = '#\n# THIS FILE IS MANAGED BY GITADMIN\n#\n'
 
 sqlschema = """
 CREATE TABLE domain
@@ -231,8 +233,33 @@ def create_database():
 def create_authorized_keys():
     path = authorized_keys_filepath()
     f = open(path, 'w')
-    f.write('#\n# THIS FILE IS MANAGED BY GITADMIN\n#\n')
+    f.write(authorized_keys_header)
     f.close()
+
+def write_ssh_authorized_keys():
+    rs = conn.execute("""
+        SELECT
+                U.name,
+                S.algo,
+                S.key,
+                S.comment
+        FROM
+                user U
+                JOIN sshkey S
+                  ON U.id = S.userid
+    """)
+    rs = list(rs)
+
+    fpath = authorized_keys_filepath()
+    tmp = fpath + '.tmp'
+
+    f = open(tmp, 'w')
+    f.write(authorized_keys_header)
+    for r in rs:
+        f.write('command="gitadmin {}" {} {} {}\n'.format(*r))
+    f.close()
+
+    os.rename(tmp, fpath)
 
 def create_repos_dir():
     dirpath = repos_dirpath()
@@ -253,33 +280,6 @@ def create_repo_git(domain, reponame):
 def delete_repo_git(domain, reponame):
     fpath = repo_dirpath(domain, reponame)
     subprocess.call(['rm', '-rf', '--', fpath])
-
-def write_ssh_authorized_keys():
-    rs = conn.execute("""
-        SELECT
-                U.name,
-                S.algo,
-                S.key,
-                S.comment
-        FROM
-                user U
-                JOIN sshkey S
-                  ON U.id = S.userid
-    """)
-    rs = list(rs)
-
-    fpath = authorized_keys_filepath()
-    tmp = fpath + '.tmp'
-
-    cts = []
-    for r in rs:
-        cts.append('command="gitadmin {}" {} {} {}'.format(*r))
-
-    f = open(tmp, 'w')
-    f.write('\n'.join(cts))
-    f.close()
-
-    os.rename(tmp, fpath)
 
 def exact_match(regex, x):
     return re.match(r'^' + regex + r'$', x)
