@@ -364,19 +364,11 @@ def need_is_domain_admin(domain):
     if is_root:
         return
 
-    rs = conn.execute("""
-        SELECT
-                1
-        FROM
-                admin A
-                JOIN domain D
-                  ON A.domainid = D.id
-                JOIN user U
-                  ON A.userid = U.id
-        WHERE
-                D.name = ?
-                AND U.name = ?
-    """, (domain, loguser))
+    domainid = need_domain_id(domain)
+
+    rs = conn.execute("SELECT 1 FROM admin A "
+                      "WHERE A.domainid = ? and A.userid = ?",
+                      (domainid, loguid))
     rs = list(rs)
 
     if not rs:
