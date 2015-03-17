@@ -680,7 +680,7 @@ def delete_repo(domain, repo):
 def set_domain_admin(domain, user):
     domainid = need_domain_id(domain)
     userid = need_user_id(user)
-    if is_root:
+    if user == 'root':
         print("Refusing to explicitly add the root admin as domain admin",
                 file=sys.stderr)
         return
@@ -698,7 +698,7 @@ def unset_domain_admin(domain, user):
 
 @domaincmd
 def set_user_perm(domain, repo, user, perm):
-    if is_root:
+    if user == 'root':
         print("No need to add permissions for the root admin", file=sys.stderr)
         return
     repoid = need_repo_id(domain, repo)
@@ -753,7 +753,15 @@ def create_domain(domain, fullname):
 
 @rootcmd
 def delete_domain(domain):
-    conn.execute('DELETE FROM domain WHERE name = ?', (domain,))
+    domainid = need_domain_id(domain)
+
+    conn.execute('DELETE FROM admin WHERE domainid = ?', (domainid,))
+    try:
+        conn.execute('DELETE FROM domain WHERE id = ?', (domainid,))
+    except sqlite3.IntegrityError as e:
+        raise GAError('Database integrity error. That probably means that '
+                      'this domain has still repositories in it. DB error: {}'
+                      .format(e))
 
     delete_domain_dir(domain)
 
@@ -766,6 +774,9 @@ def create_user(user, fullname):
 
 @rootcmd
 def delete_user(user):
+    if (user == 'root'):
+        print('Refusing to delete root user', file=sys.stderr)
+        return
     userid = need_user_id(user)
 
     conn.execute('DELETE FROM sshkey WHERE userid = ?', (userid,))
