@@ -675,12 +675,12 @@ def delete_repo(domain, repo):
 
 @domaincmd
 def set_domain_admin(domain, user):
-    domainid = need_domain_id(domain)
-    userid = need_user_id(user)
     if user == 'root':
         print("Refusing to explicitly add the root admin as domain admin",
                 file=sys.stderr)
         return
+    domainid = need_domain_id(domain)
+    userid = need_user_id(user)
 
     conn.execute('INSERT OR IGNORE INTO admin (domainid, userid) '
                  'VALUES (?, ?)', (domainid, userid))
