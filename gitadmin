@@ -151,7 +151,7 @@ domainname_regex = r'[abcdefghijklmnopqrstuvwxyz]{2,16}'
 username_regex   = r'[abcdefghijklmnopqrstuvwxyz]{2,16}'   
 reponame_regex   = r'[abcdefghijklmnopqrstuvwxyz0123456789-]{2,16}'
 algo_regex       = r'(ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)'
-key_regex        = r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\+/]{32,4096}'
+key_regex        = r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\+/]{32,4096}={0,2}'  # 32 and 4096 are rather random numbers...
 comment_regex    = r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@+/_-]{,64}'
 
 dfl_cmds = {}
