@@ -654,8 +654,13 @@ def create_repo(domain, repo):
     domainid = need_domain_id(domain)
     need_valid_reponame(repo)
 
-    conn.execute('INSERT INTO REPO (domainid, name) '
-                 'VALUES (?, ?)', (domainid, repo))
+    try:
+        conn.execute('INSERT INTO REPO (domainid, name) '
+                     'VALUES (?, ?)', (domainid, repo))
+    except sqlite3.IntegrityError as e:
+        raise GAError("Failed to create repo. That probably means a repo "
+                      "with this name already exists in this domain. "
+                      "DB error was: {}".format(e))
 
     create_repo_git(domain, repo)
 
