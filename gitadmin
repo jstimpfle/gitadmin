@@ -150,6 +150,16 @@ user_cmds = {}
 domain_cmds = {}
 root_cmds = {}
 
+class GAError(Exception):
+    pass
+
+class InvalidArgument(GAError):
+    pass
+
+class Unauthorized(GAError):
+    def __str__(self):
+        return 'Permission denied: {}'.format(*self.args)
+
 class GitAdminShell(cmd.Cmd):
     def __init__(self, intro=None, prompt=None):
         super().__init__()
@@ -177,16 +187,6 @@ class GitAdminShell(cmd.Cmd):
             exec_cmdline(line)
         except GAError as e:
             print(e, file=sys.stderr)
-
-class GAError(Exception):
-    pass
-
-class InvalidArgument(GAError):
-    pass
-
-class Unauthorized(GAError):
-    def __str__(self):
-        return 'Permission denied: {}'.format(*self.args)
 
 def basedir_filepath():
     return config['basedir']
