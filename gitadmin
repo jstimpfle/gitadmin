@@ -178,6 +178,29 @@ class GitAdminShell(cmd.Cmd):
     def emptyline(self):
         pass
 
+    def default(self, line):
+        if line == 'EOF':
+            if is_interactive:
+                print()
+            sys.exit(0)
+        else:
+            raise InvalidArgument("Couldn't parse command")
+
+    def onecmd(self, line):
+        try:
+            super().onecmd(line)
+        except sqlite3.IntegrityError  as e:
+            raise InvalidArgument(
+                'The database issued an integrity constraint error. '
+                'If you tried to delete data, that probably means that there '
+                'are leftoverdependencies. '
+                'If you tried to input data, that probably means '
+                'that such an entry already exists. The exact message was: {}'
+                .format(e)
+            )
+        except GAError as e:
+            print("ERROR:", e, file=sys.stderr)
+
     def cmdloop(self):
         try:
             super().cmdloop()
@@ -186,15 +209,7 @@ class GitAdminShell(cmd.Cmd):
             self.intro = None  # HACK
             self.cmdloop()
 
-    def default(self, line):
-        if line == 'EOF':
-            if is_interactive:
-                print()
-            sys.exit(0)
-        try:
-            exec_cmdline(line)
-        except GAError as e:
-            print(e, file=sys.stderr)
+
 
 def basedir_filepath():
     return config['basedir']
@@ -443,7 +458,7 @@ def transaction(cmd):
 
 def do_command_helper(cmd):
     def func(self, x):
-        return self.default('{} {}'.format(cmd.__name__, x))
+        return exec_cmdline('{} {}'.format(cmd.__name__, x))
     setattr(GitAdminShell, 'do_' + cmd.__name__, func)
 
 def transactionless_rootcmd(cmd):
@@ -518,7 +533,7 @@ def perms():
         print("You are the root admin; you have write access to all repos",
               file=sys.stderr)
         return
-        
+
     rs = conn.execute("""
         SELECT
                 D.name || "/" || R.name,
@@ -555,12 +570,19 @@ def add_sshkey():
               file=sys.stderr)
     else:
         if is_interactive:
-            print('Please give the key which you want to add on one line')
+            print('Please give the key which you want added on one line')
         line = sys.stdin.readline()
         algo, key, comment = need_valid_sshkey(line)
-        conn.execute('INSERT INTO sshkey (userid, algo, key, comment) '
-                     'VALUES (?, ?, ?, ?)', (loguid, algo, key, comment))
-        write_ssh_authorized_keys()
+        try:
+            conn.execute('INSERT INTO sshkey (userid, algo, key, comment) '
+                         'VALUES (?, ?, ?, ?)', (loguid, algo, key, comment))
+        except sqlite3.IntegrityError as e:
+            raise GAError(
+                  "Couldn't add ssh key. That probably means this key is "
+                  "already in the database. The DB error: {}".format(e)
+            )
+        else:
+            write_ssh_authorized_keys()
 
 @usercmd
 def remove_sshkey():
@@ -684,7 +706,7 @@ def set_user_perm(domain, repo, user, perm):
     if mode is None:
         raise InvalidArgument(
                    "Usage: set_user_perm DOMAIN REPO USER <none|R|RW>")
-    
+
     if mode == -1:
         conn.execute('DELETE FROM permissions '
                      'WHERE repoid = ? AND userid = ?', (repoid, userid))
@@ -754,16 +776,22 @@ def delete_user(user):
     write_ssh_authorized_keys()
 
 def exec_cmd(cmd):
-    name, args = cmd[0], cmd[1:]
+    name, arguments = cmd[0], cmd[1:]
     if name in root_cmds:
-        r = root_cmds[name](*args)
+        func = root_cmds[name]
     elif name in domain_cmds:
-        r = domain_cmds[name](*args)
+        func = domain_cmds[name]
     elif name in user_cmds:
-        r = user_cmds[name](*args)
+        func = user_cmds[name]
     else:
-        raise InvalidArgument("No such command: {}".format(name))
-    return r
+        def func(*args):
+            raise InvalidArgument("No such command: {}".format(name))
+    try:
+        return func(*arguments)
+    except TypeError:
+        # for now, let's hope this is true
+        # using inspection before calling func would be overkill
+        raise InvalidArgument("wrong number of arguments")
 
 def exec_cmdline(cmdline):
     cmd = cmdline.split()
