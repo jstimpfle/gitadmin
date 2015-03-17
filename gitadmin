@@ -815,20 +815,30 @@ def initialize():
     create_authorized_keys()
     create_database()
 
+def print_usage_and_exit():
+    print(usage, file=sys.stderr)
+    sys.exit(1)
 
 def main():
-    args = sys.argv[1:]
+    argv = sys.argv
 
-    if len(args) < 1 or (args[0] == '-c' and len(args) != 2):
-        print(usage, file=sys.stderr)
-        sys.exit(1)
-
-    if args[0] == '--init':
+    if len(argv) == 2 and argv[1] == '--init':
         initialize()
         return
 
-    if args[0] == '-c':
-        args = args[1].split()
+    if len(argv) < 2 or (argv[1] == '-c' and len(argv) != 3):
+        print_usage_and_exit()
+    if argv[1] == '-c':
+        normalized = argv[2]
+    else:
+        normalized = ' '.join(argv)
+    words = normalized.split(None, 2)
+    if len(words) == 2:
+        cmdline = None
+    elif len(words) == 3:
+        cmdline = words[2]
+    else:
+        print_usage_and_exit()
 
     connect_database()
 
@@ -840,13 +850,12 @@ def main():
 
     ssh_original_command = os.getenv('SSH_ORIGINAL_COMMAND')
     is_interactive = os.isatty(sys.stdin.fileno())
-    loguser = args[0]
+    loguser = words[1]
     loguid = need_user_id(loguser)
     is_root = loguser == 'root'
 
-    cmd = args[1:]
-    if cmd:
-        exec_cmd(cmd)
+    if cmdline:
+        exec_cmdline(cmdline)
     elif ssh_original_command is not None:
         exec_git_cmdline(ssh_original_command)
     elif is_interactive:
