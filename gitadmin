@@ -170,7 +170,7 @@ class Unauthorized(GAError):
         return 'Permission denied: {}'.format(*self.args)
 
 class GitAdminShell(cmd.Cmd):
-    def __init__(self, intro=None, prompt=None):
+    def __init__(self, intro='', prompt=''):
         super().__init__()
         self.intro = intro
         self.prompt = prompt
@@ -188,16 +188,17 @@ class GitAdminShell(cmd.Cmd):
 
     def onecmd(self, line):
         try:
-            super().onecmd(line)
-        except sqlite3.IntegrityError  as e:
-            raise InvalidArgument(
-                'The database issued an integrity constraint error. '
-                'If you tried to delete data, that probably means that there '
-                'are leftoverdependencies. '
-                'If you tried to input data, that probably means '
-                'that such an entry already exists. The exact message was: {}'
-                .format(e)
-            )
+            try:
+                super().onecmd(line)
+            except sqlite3.IntegrityError  as e:
+                raise InvalidArgument(
+                    'The database issued an integrity constraint error. '
+                    'If you tried to delete data, that probably means that '
+                    'there are leftover dependencies. '
+                    'If you tried to input data, that probably means that '
+                    'such an entry already exists. The exact message was: {}'
+                    .format(e)
+                )
         except GAError as e:
             print("ERROR:", e, file=sys.stderr)
 
