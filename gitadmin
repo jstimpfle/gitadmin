@@ -733,7 +733,7 @@ def create_domain(domain, fullname):
 
 @rootcmd
 def delete_domain(domain):
-    conn.execute('DELETE FROM domain where name = ?', (domain,))
+    conn.execute('DELETE FROM domain WHERE name = ?', (domain,))
 
     delete_domain_dir(domain)
 
@@ -747,10 +747,10 @@ def create_user(user, fullname):
 @rootcmd
 def delete_user(user):
     userid = need_user_id(user)
-    conn.execute('DELETE FROM sshkey where userid = ?', (userid,))
-    conn.execute('DELETE FROM admin where userid = ?', (userid,))
-    conn.execute('DELETE FROM permissions where userid = ?', (userid,))
-    conn.execute('DELETE FROM user where id = ?', (userid,))
+    conn.execute('DELETE FROM sshkey WHERE userid = ?', (userid,))
+    conn.execute('DELETE FROM admin WHERE userid = ?', (userid,))
+    conn.execute('DELETE FROM permissions WHERE userid = ?', (userid,))
+    conn.execute('DELETE FROM user WHERE id = ?', (userid,))
     warn_unadministered_domains()
 
     write_ssh_authorized_keys()
