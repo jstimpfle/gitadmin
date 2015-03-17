@@ -143,7 +143,7 @@ CREATE TABLE admin
 , UNIQUE (domainid, userid)
 );
 
-INSERT INTO user (name, fullname) VALUES ("root", "");
+INSERT INTO user (id, name, fullname) VALUES (0, "root", "");
 
 """
 
