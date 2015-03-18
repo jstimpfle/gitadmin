@@ -347,9 +347,9 @@ def need_is_root():
         raise Unauthorized("You are not root admin")
 
 def need_is_domain_admin(domain):
+    domainid = need_domain_id(domain)
     if is_root:
         return
-    domainid = need_domain_id(domain)
     rs = conn.execute("""
         SELECT 1
         FROM   admin A
