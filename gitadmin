@@ -55,26 +55,25 @@ Type 'info' for a list of available commands
 shell_prompt = 'gitadmin> '
 
 shell_usage = """
-Domain admin commands:                  Root admin commands:
+Root admin commands:
 
-  admins DOMAIN                           users
-  repos DOMAIN                            su USER CMD...
-  repo_perms DOMAIN REPO                  create_domain DOMAIN FULLNAME
-  set_domain_admin DOMAIN USER            delete_domain DOMAIN
-  unset_domain_admin DOMAIN USER          create_user USER FULLNAME
-  create_repo DOMAIN REPO                 delete_user USER
-  delete_repo DOMAIN REPO
+   users
+   su USER CMD...
+   create_domain DOMAIN FULLNAME
+   delete_domain DOMAIN
+   create_user USER FULLNAME
+   delete_user USER
 
-User commands:
-
-  info
-  whoami
-  domains
-  perms
-  sshkeys
-  add_sshkey
-  remove_sshkey
-  set_perm DOMAIN REPO USER <none|R|RW>
+Domain admin commands:
+                                            User commands:
+  admins DOMAIN
+  repos DOMAIN                                info
+  repo_perms DOMAIN REPO                      whoami
+  set_domain_admin DOMAIN USER                domains
+  unset_domain_admin DOMAIN USER              perms
+  create_repo DOMAIN REPO                     sshkeys
+  delete_repo DOMAIN REPO                     add_sshkey
+  set_perm DOMAIN REPO USER <none|R|RW>       remove_sshkey
 """
 
 authorized_keys_header = """\
