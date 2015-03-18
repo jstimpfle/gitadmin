@@ -476,7 +476,7 @@ def info():
 
 @usercmd
 def whoami():
-    print(loguser, file=sys.stderr)
+    print(loguser)
 
 @usercmd
 def domains():
@@ -635,7 +635,7 @@ def delete_repo(domain, repo):
 @domaincmd
 def set_domain_admin(domain, user):
     if user == 'root':
-        print("No need to make root a domain admin", file=sys.stderr)
+        print("No need to make the root admin a domain admin", file=sys.stderr)
         return
     domainid = need_domain_id(domain)
     userid = need_user_id(user)
@@ -723,7 +723,7 @@ def create_user(user, fullname):
 @rootcmd
 def delete_user(user):
     if (user == 'root'):
-        print('Refusing to delete root user', file=sys.stderr)
+        print('WARNING: Refusing to delete root user', file=sys.stderr)
         return
     userid = need_user_id(user)
     conn.execute('DELETE FROM sshkey WHERE userid = ?', (userid,))
@@ -859,4 +859,4 @@ if __name__ == '__main__':
         print('GitAdmin: Unexpected error:', e, file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt as e:
-        print('Keyboard interrupt')
+        print('Keyboard interrupt', file=sys.stderr)
