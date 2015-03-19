@@ -46,6 +46,8 @@ gitadmin invocation:
 """
 
 long_usage = short_usage + """
+Valid gitadmin COMMANDs can be listed with "gitadmin info"
+
 In the first case, print this help message.
 
 In the second case, initialize a new gitadmin environment. gitadmin will abort
@@ -67,7 +69,7 @@ double quotes. Inside double quotes, the special sequences \\ and \" are
 interpreted to mean the characters \ and " respectively, but otherwise the
 string is taken literally.  Example gitadmin shellscript line:
 
-create_user john "John \"yo mama's fat\" Doe"
+create_user john "John \\"yo mama's fat\\" Doe"
 
 In the fifth case, run the gitadmin shell in noninteractive mode over COMMAND
 which must be a single argument. Example gitadmin invocation from sh:
