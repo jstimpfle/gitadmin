@@ -16,53 +16,66 @@ config = {
 
 # runtime state
 conn = None
-# these are mostly constant after initialization,
-# but might be temporarily swapped by "su"
+# state which will remain constant after this initialization
+is_stdin_tty = os.isatty(sys.stdin.fileno())
+is_stdout_tty = os.isatty(sys.stdout.fileno())
+is_stderr_tty = os.isatty(sys.stderr.fileno())
+# This will be determined when the command line is parsed.
+# Its value will depend on is_std{in,out,err}_tty and the run mode.
+# Once set, it remains constant
+is_interactive = None
+# these will be set when the database connection is made
+# (that means, not for --help and --init run modes)
+# They remain constant once set, except they might be temporarily swapped by
+# "su"
 loguser = None
 loguid = None
 is_root = False
 stored_loguser = None
 stored_loguid = None
-# state which remains constant after initialization
-is_stdin_tty = None
-is_stdout_tty = None
-is_stderr_tty = None
-is_interactive = None
 
-usage = """
+short_usage = """\
 gitadmin invocation:
 
+    gitadmin --help
     gitadmin --init
     gitadmin ARGS...
     gitadmin [-u USER]
     gitadmin [-u USER] -c COMMAND
+    SSH_ORIGINAL_CMD=GITCMD gitadmin [-u USER]
+"""
 
-In the first case, initialize a new gitadmin environment. gitadmin will abort if
-an existing environment is found.
+long_usage = short_usage + """
+In the first case, print this help message.
 
-In the second case, the argument list is interpreted as a single gitadmin
+In the second case, initialize a new gitadmin environment. gitadmin will abort
+if an existing environment is found.
+
+In the third case, the argument list is interpreted as a single gitadmin
 command. The arguments must form a pre-split valid gitadmin command. For
 example, a valid gitadmin invocation from sh would be
 
     $ gitadmin create_user john "John Doe"
 
-In the third case, run the gitadmin shell interpreter using stdin/stdout/stderr.
-The shell is run in interactive mode if all standard streams are connected to a
-tty, and otherwise in noninteractive mode. if USER is given, run the shell as
-this gitadmin user. Commands are read from stdin line by line, and split into
-words using a very simple algorithm: Splitting occurs at whitespace, but it is
-possible to prevent splitting by enclosing parts with double quotes. Inside
-double quotes, the special sequences \\ and \" are interpreted to mean the
-characters \ and " respectively, but otherwise the string is taken literally.
-Example gitadmin shellscript line:
+In the fourth case, run the gitadmin shell interpreter using
+stdin/stdout/stderr.  The shell is run in interactive mode if all standard
+streams are connected to a tty, and otherwise in noninteractive mode. if USER is
+given, run the shell as this gitadmin user. Commands are read from stdin line by
+line, and split into words using a very simple algorithm: Splitting occurs at
+whitespace, but it is possible to prevent splitting by enclosing parts with
+double quotes. Inside double quotes, the special sequences \\ and \" are
+interpreted to mean the characters \ and " respectively, but otherwise the
+string is taken literally.  Example gitadmin shellscript line:
 
 create_user john "John \"yo mama's fat\" Doe"
 
-In the fourth case, run the gitadmin shell in noninteractive mode over COMMAND
+In the fifth case, run the gitadmin shell in noninteractive mode over COMMAND
 which must be a single argument. Example gitadmin invocation from sh:
 
     $ gitadmin -u john -c 'set_perm johnsdomain johnsrepo jane RW'
 
+In the sixth case, validate the environment variable SSH_ORIGINAL_CMD as a valid
+git request (git-receive-pack 'DOMAIN/REPO' or git-uploadpack 'DOMAIN/REPO')
 """
 
 shell_intro = """
@@ -200,8 +213,7 @@ class GitAdminShell(cmd.Cmd):
 
     def default(self, line):
         if line == 'EOF':
-            if is_interactive:
-                print()
+            print()
             sys.exit(0)
         else:
             raise InvalidArgument("Couldn't parse command")
@@ -552,7 +564,8 @@ def add_sshkey():
     if is_root:
         raise GAError("You are the root admin; refusing to add an SSH key")
     if is_interactive:
-        print('Please give the key which you want added on one line')
+        print('Please give the key which you want added on one line',
+              file=sys.stderr)
     line = sys.stdin.readline()
     algo, key, comment = need_valid_sshkey(line)
     try:
@@ -568,7 +581,7 @@ def add_sshkey():
 def remove_sshkey():
     if is_interactive:
         print("Please give the key which you want removed on one line, "
-              "just as returned by 'sshkeys'")
+              "just as returned by 'sshkeys'", file=sys.stderr)
     line = sys.stdin.readline()
     algo, key, _ = need_valid_sshkey(line)
     conn.execute('DELETE FROM sshkey '
@@ -710,7 +723,7 @@ def su(user, *args):
     loguid = userid
     is_root = loguser == 'root'
     try:
-        exec_cmd(args)
+        exec_cmd_array(args)
     finally:
         loguser = stored_loguser
         loguid = stored_loguid
@@ -754,28 +767,6 @@ def delete_user(user):
     warn_unadministered_domains()
     write_ssh_authorized_keys()
 
-def exec_cmd(cmd):
-    name, arguments = cmd[0], cmd[1:]
-    if name in root_cmds:
-        func = root_cmds[name]
-    elif name in domain_cmds:
-        func = domain_cmds[name]
-    elif name in user_cmds:
-        func = user_cmds[name]
-    else:
-        def func(*args):
-            raise InvalidArgument("No such command: {}".format(name))
-    try:
-        return func(*arguments)
-    except TypeError:
-        # for now, let's hope this is true
-        # using inspection before calling func would be overkill
-        raise InvalidArgument("wrong number of arguments")
-
-def exec_cmdline(cmdline):
-    cmd = cmdline.split()
-    return exec_cmd(cmd)
-
 def git_receive_pack(domain, repo):
     need_write_permission(domain, repo)
     path = repo_dirpath(domain, repo)
@@ -786,16 +777,72 @@ def git_upload_pack(domain, repo):
     path = repo_dirpath(domain, repo)
     subprocess.call(['git-upload-pack', path])
 
+def exec_cmd_array(cmd):
+    name, arguments = cmd[0], cmd[1:]
+    if name in root_cmds:
+        func = root_cmds[name]
+    elif name in domain_cmds:
+        func = domain_cmds[name]
+    elif name in user_cmds:
+        func = user_cmds[name]
+    else:
+        raise InvalidArgument("No such command: {}".format(name))
+    try:
+        return func(*arguments)
+    except TypeError:
+        # for now, let's hope this is true
+        # using inspection before calling func would be overkill
+        raise InvalidArgument("wrong number of arguments")
+
+def split_cmdline(cmdline):
+    cmdline = cmdline.strip()
+    cmd = []
+    word = ""
+    quoted = False
+    escaped = False
+    for char in cmdline:
+        if escaped:
+            word += char
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        # XXX: .isspace() supports locales. (good thing?)
+        elif char.isspace() and not quoted:
+            cmd.append(word)
+            word = ""
+        else:
+            word += char
+    if quoted:
+        raise InvalidArgument("Unterminated quote in command line {}"
+                              .format(cmdline))
+    if escaped:
+        raise InvalidArgument("Trailing escape character in command line {}"
+                              .format(cmdline))
+    if word:
+        cmd.append(word)
+    return cmd
+
+def exec_cmdline(cmdline):
+    cmd_array = split_cmdline(cmdline)
+    return exec_cmd_array(cmd_array)
+
 def exec_git_cmdline(ssh_original_command):
+    # probably git-* will recognize 8bit unclean streams themselves...
+    #need_8bitclean()
     regex = r"({}|{}) '({})/({})'".format(
         'git-receive-pack', 'git-upload-pack', domainname_regex, reponame_regex
     )
     m = exact_match(regex, ssh_original_command)
     if m is None:
-        raise InvalidArgument("Got {}, but only\n"
-            "\tgit-receive-pack '<valid-domain-name>/<valid-repo-name>'\n"
-            "\tgit-upload-pack '<valid-domain-name>/<valid-repo-name>'\n"
-            "are allowed commands.".format(ssh_original_command))
+        raise InvalidArgument(
+            "Got {}, but only\n"
+            "\tgit-receive-pack 'DOMAIN/REPO'\n"
+            "\tgit-upload-pack  'DOMAIN/REPO'\n"
+            "are allowed commands (DOMAIN and REPO must be valid names)."
+            .format(ssh_original_command)
+        )
     cmd, domain, repo = m.groups()
     if cmd == 'git-receive-pack':
        git_receive_pack(domain, repo)
@@ -820,47 +867,24 @@ def initialize_gitadmin_environment():
     create_authorized_keys()
     create_database()
 
-def run_interactive_shell():
-    global is_interactive
-    is_interactive = True
-    if is_root:
-        print("Starting root admin shell...")
-    GitAdminShell().cmdloop()
-
-def run_noninteractive_shell():
-    global is_interactive
-    is_interactive = False
-    for line in sys.stdin:
-        exec_cmdline(line)
-
 def run_cmdstring_shell(cmdstring):
     global is_interactive
     is_interactive = False
     for line in cmdstring.splitlines():
         exec_cmdline(line)
 
-def process_cmd_array(cmd_array):
-    login_user('root')
-    exec_cmd(cmd_array)
+def run_interactive_stdin_shell():
+    global is_interactive
+    is_interactive = True
+    if is_root:
+        print("Starting root admin shell...")
+    GitAdminShell().cmdloop()
 
-def process_cmd_string(cmd_string):
-    run_cmdstring_shell(cmd_string)
-
-def process_ssh_original_command(ssh_original_command):
-    # currently only git supported
-    exec_git_cmdline(ssh_original_command)
-
-def run_shell():
-    # other shells test only stdin and stderr. But Cmd.cmd prints prompts to
-    # stdout instead of stderr (can we fix that?), so redirecting from a shell
-    # with command substitution, so for example, after "x=$(gitadmin whoami)"
-    # contains not only a username but also the prompts.
-    # For that reason we test also whether stdout is a tty, to run a
-    # noninteractive shell if we are being run inside a command substitution.
-    if is_stdin_tty and is_stdout_tty and is_stderr_tty:
-        run_interactive_shell()
-    else:
-        run_noninteractive_shell()
+def run_noninteractive_stdin_shell():
+    global is_interactive
+    is_interactive = False
+    for line in sys.stdin:
+        exec_cmdline(line)
 
 def login_user(user):
     global loguser
@@ -872,56 +896,104 @@ def login_user(user):
     loguser = user
     is_root = loguser == 'root'
 
+def need_dbconn(cmd):
+    def func(req_user, *args, **kwargs):
+        connect_database()
+        if req_user is None:
+            login_user('root')
+        else:
+            login_user(req_user)
+        r = cmd(*args, **kwargs)
+        disconnect_database()
+        return r
+    return func
+
+def process_help_request():
+    print(long_usage)
+
+def process_init_request():
+    global is_interactive
+    is_interactive = False
+    initialize_gitadmin_environment()
+
+@need_dbconn
+def process_cmd_array(cmd_array):
+    global is_interactive
+    is_interactive = is_stdin_tty and is_stdout_tty and is_stderr_tty
+    exec_cmd_array(cmd_array)
+
+@need_dbconn
+def process_cmd_string(cmd_string):
+    global is_interactive
+    is_interactive = False
+    run_cmdstring_shell(cmd_string)
+
+@need_dbconn
+def process_stdin():
+    # other shells test only stdin and stderr. But Cmd.cmd prints prompts to
+    # stdout instead of stderr (can we fix that?), so redirecting from a shell
+    # with command substitution, so for example, after "x=$(gitadmin whoami)"
+    # contains not only a username but also the prompts.
+    # For that reason we test also whether stdout is a tty, to run a
+    # noninteractive shell if we are being run inside a command substitution.
+    if is_stdin_tty and is_stdout_tty and is_stderr_tty:
+        run_interactive_stdin_shell()
+    else:
+        run_noninteractive_stdin_shell()
+
+@need_dbconn
+def process_ssh_original_command(ssh_original_command):
+    global is_interactive
+    # currently only git supported
+    exec_git_cmdline(ssh_original_command)
+
 def gitadmin(argv, ssh_original_command):
     argv = argv[1:]
+    wantinit = None
+    wanthelp = None
     req_user = None
     cmd_string = None
     cmd_array = None
-    if len(argv) == 1 and argv[0] == '--init':
-        initialize_gitadmin_environment()
-        return
-    if len(argv) == 1 and argv[0] == '--help':
-        print(usage)
-        return
+    if len(argv) >= 1 and argv[0] == '--init':
+        wantinit = ()
+        argv = argv[1:]
+    if len(argv) >= 1 and argv[0] == '--help':
+        wanthelp = ()
+        argv = argv[1:]
     if len(argv) >= 2 and argv[0] == '-u':
         req_user = argv[1]
         argv = argv[2:]
     if len(argv) >= 2 and argv[0] == '-c':
         cmd_string = argv[1]
         argv = argv[2:]
-    if len(argv) > 0:
+    if len(argv) and not argv[0].startswith('-'):
         cmd_array = argv.copy()
+        argv = []
 
-    if cmd_array is not None:
-        if req_user is not None or cmd_string is not None:
-            print(usage, file=sys.stderr)
-            sys.exit(1)
-    if ssh_original_command is not None:
-        if cmd_array is not None or cmd_string is not None:
-            print(ssh_commandline_not_possible, file=sys.stderr)
-            sys.exit(1)
+    def wrong_usage():
+        print(short_usage, file=sys.stderr)
+        sys.exit(1)
+    def exclusive(*opts):
+        notnone = [o for o in opts if o is not None]
+        if len(notnone) > 1:
+            wrong_usage()
+    if len(argv):
+        wrong_usage()
+    exclusive(wantinit, wanthelp, cmd_array, cmd_string)
+    exclusive(wantinit, wanthelp, cmd_array, req_user)
 
-    global is_stdin_tty
-    global is_stdout_tty
-    global is_stderr_tty
-    is_stdin_tty = os.isatty(sys.stdin.fileno())
-    is_stdout_tty = os.isatty(sys.stdout.fileno())
-    is_stderr_tty = os.isatty(sys.stderr.fileno())
-
-    connect_database()
-    if req_user is None:
-        login_user('root')
-    else:
-        login_user(req_user)
-    if cmd_array is not None:
-        process_cmd_array(cmd_array)
+    if wanthelp is not None:
+        process_help_request()
+    elif wantinit is not None:
+        process_init_request()
+    elif cmd_array is not None:
+        process_cmd_array(req_user, cmd_array)
     elif cmd_string is not None:
-        process_cmd_string(cmd_string)
-    elif ssh_original_command is not None:
-        process_ssh_original_command(ssh_original_command)
+        process_cmd_string(req_user, cmd_string)
+    elif ssh_original_command is None:
+        process_stdin(req_user)
     else:
-        run_shell()
-    disconnect_database()
+        process_ssh_original_command(req_user, ssh_original_command)
 
 def main(argv, ssh_original_command=None):
     try:
