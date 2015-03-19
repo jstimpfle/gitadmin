@@ -628,7 +628,8 @@ def repo_perms(domain, repo):
     repoid = need_repo_id(domain, repo)
     rs = conn.execute("""
         SELECT
-                D.name || "/" || R.name,
+                D.name,
+                R.name,
                 U.name,
                 CASE WHEN mode=0 THEN "R" ELSE "RW" END
         FROM
