@@ -183,20 +183,17 @@ reponame_regex   = r'[abcdefghijklmnopqrstuvwxyz0123456789-]{2,16}'
 # XXX
 domaincomment_regex = (
     r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    "'"
-    r'0123456789 &()\+,\./<>@-]{0,255}'
+    "'" r'0123456789 &()\+,\./<>@-]{0,255}'
 )
 # XXX
 usercomment_regex = (
     r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '
-    "'"
-    r'\+.<>@-]{0,63}'
+    "'" r'\+.<>@-]{0,63}'
 )
 # XXX
 repocomment_regex = (
     r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    "'"
-    r'0123456789 &()\+,\./<>@-]{0,255}'
+    "'" r'0123456789 &()\+,\./<>@-]{0,255}'
 )
 algo_regex       = (r'(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp256'
                     r'|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)')
@@ -311,10 +308,11 @@ def write_ssh_authorized_keys():
     rs = list(rs)
     fpath = authorized_keys_filepath()
     tmp = fpath + '.tmp'
-    with open(tmp, 'w') as f:
-        f.write(authorized_keys_header)
-        for r in rs:
-            f.write('command="gitadmin {}" {} {} {}\n'.format(*r))
+    f = open(tmp, 'w')
+    f.write(authorized_keys_header)
+    for r in rs:
+        f.write('command="gitadmin {}" {} {} {}\n'.format(*r))
+    f.close()
     os.rename(tmp, fpath)
 
 def create_repos_dir():
