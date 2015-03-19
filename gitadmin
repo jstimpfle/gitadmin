@@ -1015,7 +1015,7 @@ def gitadmin(argv, ssh_original_command):
         cmd_string = argv[1]
         argv = argv[2:]
     if len(argv) and not argv[0].startswith('-'):
-        cmd_array = argv.copy()
+        cmd_array = list(argv)
         argv = []
 
     def wrong_usage():
