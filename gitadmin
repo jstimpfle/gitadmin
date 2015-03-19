@@ -627,6 +627,8 @@ def remove_sshkey():
     rs = list(rs)
     if rs[0][0]:
         write_ssh_authorized_keys()
+    else:
+        print("WARNING: Key not found", file=sys.stderr)
 
 @domaincmd
 def admins(domain):
