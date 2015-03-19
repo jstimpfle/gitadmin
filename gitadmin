@@ -472,6 +472,41 @@ def warn_unadministered_domains():
     for r in rs:
         print("WARNING: Domain has no admin: {}".format(r[0]), file=sys.stderr)
 
+def format_table(rs):
+    """format a list of lists of things nicely for the user
+    Returns a list of strings (the rows formatted with matching colum widths)
+    """
+    lens = []
+    i = 0
+    while True:
+        got = False
+        l = 0
+        for r in rs:
+            if i < len(r):
+                got = True
+                l = max(l, len(r[i]))
+        if not got:
+            break
+        lens.append(l)
+        i += 1
+    out = []
+    def lalign(s, n):
+        return s + (" " * (n - len(s)))
+    for r in rs:
+        outr = '\t'.join(lalign(str(c), l) for c, l in zip(r, lens))
+        out.append(outr)
+    return out
+
+def print_table(rs):
+    rs = list(rs)
+    if is_interactive:
+        rs = format_table(rs)
+        for r in rs:
+            print(r)
+    else:
+        for r in rs:
+            print('\t'.join(str(c) for c in r))
+
 def transaction(cmd):
     def func(*args, **kwargs):
         conn.execute('BEGIN TRANSACTION')
@@ -558,8 +593,7 @@ def domains():
             FROM   domain D JOIN Admin A ON D.id = A.domainid
             WHERE  A.userid = ?
         """, (loguid,))
-    for r in rs:
-        print('\t'.join(r))
+    print_table(rs)
 
 @usercmd
 def perms():
@@ -580,8 +614,7 @@ def perms():
         WHERE
                 U.id = ?
     """, (loguid,))
-    for r in rs:
-        print('\t'.join(r))
+    print_table(rs)
 
 @usercmd
 def sshkeys():
@@ -590,8 +623,7 @@ def sshkeys():
         FROM   sshkey S
         WHERE  S.userid = ?
     """, (loguid,))
-    for r in rs:
-        print(' '.join(r))
+    print_table(rs)
 
 @usercmd
 def add_sshkey():
@@ -644,8 +676,7 @@ def admins(domain):
         WHERE
                 D.id = ?
     """, (domainid,))
-    for r in rs:
-        print('\t'.join(r))
+    print_table(rs)
 
 @domaincmd
 def repos(domain):
@@ -655,8 +686,7 @@ def repos(domain):
         FROM   repo R
         WHERE  R.domainid = ?
     """, (domainid,))
-    for r in rs:
-        print('\t'.join(r))
+    print_table(rs)
 
 @domaincmd
 def repo_perms(domain, repo):
@@ -679,8 +709,7 @@ def repo_perms(domain, repo):
         WHERE
                 R.id = ?
     """, (repoid,))
-    for r in rs:
-        print('\t'.join(r))
+    print_table(rs)
 
 @domaincmd
 def create_repo(domain, repo, comment):
@@ -744,8 +773,7 @@ def users():
         SELECT U.name, U.comment
         FROM   user U
     """)
-    for r in rs:
-        print('\t'.join(r))
+    print_table(rs)
 
 @sucmd
 def su(user, *args):
