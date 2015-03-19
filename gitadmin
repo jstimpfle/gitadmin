@@ -489,7 +489,7 @@ def transaction(cmd):
                     'such an entry already exists. The database error was: {}'
                     .format(e)
                 )
-        except Exception as e:
+        except:
             conn.execute('ROLLBACK')
             raise
         conn.execute('COMMIT')
