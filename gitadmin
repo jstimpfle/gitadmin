@@ -585,7 +585,7 @@ def remove_sshkey():
     line = sys.stdin.readline()
     algo, key, _ = need_valid_sshkey(line)
     conn.execute('DELETE FROM sshkey '
-                 'WHERE userid = ? AND algo = ? AND key = ?',
+                 'WHERE userid = ? AND key = ?',
                  (loguid, algo, key))
     rs = conn.execute('SELECT total_changes()')
     rs = list(rs)
