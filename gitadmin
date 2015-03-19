@@ -559,7 +559,7 @@ def domains():
             WHERE  A.userid = ?
         """, (loguid,))
     for r in rs:
-        print(*r)
+        print('\t'.join(r))
 
 @usercmd
 def perms():
