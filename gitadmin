@@ -76,9 +76,9 @@ which must be a single argument. Example gitadmin invocation from sh:
 
     $ gitadmin -u john -c 'set_perm johnsdomain johnsrepo jane RW'
 
-In the sixth case, validate the environment variable SSH_ORIGINAL_CMD as a valid
-git request (git-receive-pack 'DOMAIN/REPO' or git-uploadpack 'DOMAIN/REPO')
-"""
+In the sixth case, validate the environment variable SSH_ORIGINAL_CMD as an
+allowed git request (git-receive-pack 'DOMAIN/REPO' or git-uploadpack
+'DOMAIN/REPO') and execute it."""
 
 shell_intro = """
 Welcome to gitadmin.
