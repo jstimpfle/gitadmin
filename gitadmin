@@ -311,7 +311,7 @@ def write_ssh_authorized_keys():
     f = open(tmp, 'w')
     f.write(authorized_keys_header)
     for r in rs:
-        f.write('command="gitadmin {}" {} {} {}\n'.format(*r))
+        f.write('command="gitadmin -u {}" {} {} {}\n'.format(*r))
     f.close()
     os.rename(tmp, fpath)
 
