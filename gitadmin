@@ -609,7 +609,7 @@ def admins(domain):
                 D.id = ?
     """, (domainid,))
     for r in rs:
-        print('{}\t{}'.format(*r))
+        print('\t'.join(r))
 
 @domaincmd
 def repos(domain):
@@ -620,7 +620,7 @@ def repos(domain):
         WHERE  R.domainid = ?
     """, (domainid,))
     for r in rs:
-        print(r[0])
+        print('\t'.join(r))
 
 @domaincmd
 def repo_perms(domain, repo):
@@ -707,7 +707,7 @@ def users():
         FROM   user U
     """)
     for r in rs:
-        print('{}\t{}\t{}'.format(*r))
+        print('\t'.join(r))
 
 @sucmd
 def su(user, *args):
