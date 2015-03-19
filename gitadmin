@@ -623,7 +623,8 @@ def sshkeys():
         FROM   sshkey S
         WHERE  S.userid = ?
     """, (loguid,))
-    print_table(rs)
+    for r in rs:
+        print(' '.join(r))
 
 @usercmd
 def add_sshkey():
