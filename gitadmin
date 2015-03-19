@@ -835,32 +835,37 @@ def exec_cmd_array(cmd):
         raise InvalidArgument("wrong number of arguments: {}".format(name))
 
 def split_cmdline(cmdline):
-    cmdline = cmdline.strip()
     cmd = []
     word = ""
+    started = False
     quoted = False
     escaped = False
     for char in cmdline:
         if escaped:
             word += char
+            started = True
             escaped = False
         elif char == '\\':
             escaped = True
         elif char == '"':
             quoted = not quoted
+            started = True
         # XXX: .isspace() supports locales. (good thing?)
         elif char.isspace() and not quoted:
-            cmd.append(word)
+            if started:
+                cmd.append(word)
             word = ""
+            started = False
         else:
             word += char
+            started = True
     if quoted:
         raise InvalidArgument("Unterminated quote in command line {}"
                               .format(cmdline))
     if escaped:
         raise InvalidArgument("Trailing escape character in command line {}"
                               .format(cmdline))
-    if word:
+    if started:
         cmd.append(word)
     return cmd
 
