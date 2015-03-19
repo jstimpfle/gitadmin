@@ -91,9 +91,9 @@ Root admin commands:
 
    users
    su USER CMD...
-   create_domain DOMAIN FULLNAME
+   create_domain DOMAIN COMMENT
    delete_domain DOMAIN
-   create_user USER FULLNAME
+   create_user USER COMMENT
    delete_user USER
 
 Domain admin commands:
@@ -103,7 +103,7 @@ Domain admin commands:
   repo_perms DOMAIN REPO                      whoami
   set_domain_admin DOMAIN USER                domains
   unset_domain_admin DOMAIN USER              perms
-  create_repo DOMAIN REPO                     sshkeys
+  create_repo DOMAIN REPO COMMENT             sshkeys
   delete_repo DOMAIN REPO                     add_sshkey
   set_perm DOMAIN REPO USER <none|R|RW>       remove_sshkey
 """
@@ -118,7 +118,7 @@ sqlschema = """
 CREATE TABLE domain
 ( id INTEGER PRIMARY KEY
 , name VARCHAR NOT NULL
-, fullname VARCHAR NOT NULL
+, comment VARCHAR NOT NULL
 --
 , UNIQUE (name)
 );
@@ -126,7 +126,7 @@ CREATE TABLE domain
 CREATE TABLE user
 ( id INTEGER PRIMARY KEY
 , name VARCHAR NOT NULL
-, fullname VARCHAR NOT NULL
+, comment VARCHAR NOT NULL
 --
 , UNIQUE (name)
 );
@@ -146,6 +146,7 @@ CREATE TABLE repo
 ( id INTEGER PRIMARY KEY
 , domainid INTEGER NOT NULL
 , name VARCHAR NOT NULL
+, comment VARCHAR NOT NULL
 --
 , FOREIGN KEY (domainid) REFERENCES domain(id)
 , UNIQUE (domainid, name)
@@ -170,19 +171,37 @@ CREATE TABLE admin
 , UNIQUE (domainid, userid)
 );
 
-INSERT INTO user (id, name, fullname) VALUES (0, "root", "");
+INSERT INTO user (id, name, comment) VALUES (0, "root", "");
 
 """
 
 domainname_regex = r'[abcdefghijklmnopqrstuvwxyz]{2,16}'
 username_regex   = r'[abcdefghijklmnopqrstuvwxyz]{2,16}'
 reponame_regex   = r'[abcdefghijklmnopqrstuvwxyz0123456789-]{2,16}'
+# XXX
+domaincomment_regex = (
+    r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    "'"
+    r'0123456789 &()\+,\./<>@-]{0,255}'
+)
+# XXX
+usercomment_regex = (
+    r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '
+    "'"
+    r'\+.<>@-]{0,63}'
+)
+# XXX
+repocomment_regex = (
+    r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    "'"
+    r'0123456789 &()\+,\./<>@-]{0,255}'
+)
 algo_regex       = (r'(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp256'
                     r'|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)')
 key_regex        = (r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-                    r'0123456789\+/]{32,4096}={0,2}')  # 32 and 4096 are guesses
+                    r'0123456789\+/]{32,8192}={0,2}')  # wild guesses
 comment_regex    = (r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-                    r'0123456789\+/@-]{0,64}')
+                    r'0123456789\+/@-]{0,63}')
 
 dfl_cmds = {}
 user_cmds = {}
@@ -323,13 +342,25 @@ def need_valid_domainname(x):
     if not exact_match(domainname_regex, x):
         raise InvalidArgument('"{}" is not a valid domain name'.format(x))
 
+def need_valid_domaincomment(x):
+    if not exact_match(domaincomment_regex, x):
+        raise InvalidArgument('"{}" is not a valid domain comment'.format(x))
+
 def need_valid_username(x):
     if not exact_match(username_regex, x):
         raise InvalidArgument('"{}" is not a valid user name'.format(x))
 
+def need_valid_usercomment(x):
+    if not exact_match(usercomment_regex, x):
+        raise InvalidArgument('"{}" is not a valid user comment'.format(x))
+
 def need_valid_reponame(x):
     if not exact_match(reponame_regex, x):
         raise InvalidArgument('"{}" is not a valid repo name'.format(x))
+
+def need_valid_repocomment(x):
+    if not exact_match(repocomment_regex, x):
+        raise InvalidArgument('"{}" is not a valid repo comment'.format(x))
 
 def need_valid_algo(x):
     if not exact_match(algo_regex, x):
@@ -354,6 +385,7 @@ def need_valid_sshkey(x):
     return x, y, (z or '')
 
 def need_domain_id(domain):
+    need_valid_domainname(domain)
     rs = conn.execute("""
         SELECT id
         FROM   domain
@@ -365,6 +397,7 @@ def need_domain_id(domain):
     return rs[0][0]
 
 def need_user_id(user):
+    need_valid_username(user)
     rs = conn.execute("""
         SELECT id
         FROM   user
@@ -393,6 +426,7 @@ def need_is_domain_admin(domain):
         raise Unauthorized("You are not admin of {}".format(domain))
 
 def need_repo_id(domain, repo):
+    need_valid_reponame(repo)
     rs = conn.execute("""
         SELECT R.id
         FROM   repo R JOIN domain D On R.domainid = D.id
@@ -515,12 +549,12 @@ def whoami():
 def domains():
     if is_root:
         rs = conn.execute("""
-            SELECT D.name
+            SELECT D.name, D.comment
             FROM   domain D
         """)
     else:
         rs = conn.execute("""
-            SELECT D.name
+            SELECT D.name, D.comment
             FROM   domain D JOIN Admin A ON D.id = A.domainid
             WHERE  A.userid = ?
         """, (loguid,))
@@ -615,7 +649,7 @@ def admins(domain):
 def repos(domain):
     domainid = need_domain_id(domain)
     rs = conn.execute("""
-        SELECT R.name
+        SELECT R.name, R.comment
         FROM   repo R
         WHERE  R.domainid = ?
     """, (domainid,))
@@ -647,12 +681,13 @@ def repo_perms(domain, repo):
         print('\t'.join(r))
 
 @domaincmd
-def create_repo(domain, repo):
+def create_repo(domain, repo, comment):
     domainid = need_domain_id(domain)
     need_valid_reponame(repo)
+    need_valid_repocomment(comment)
     try:
-        conn.execute('INSERT INTO repo (domainid, name) '
-                     'VALUES (?, ?)', (domainid, repo))
+        conn.execute('INSERT INTO repo (domainid, name, comment) '
+                     'VALUES (?, ?, ?)', (domainid, repo, comment))
     except sqlite3.IntegrityError as e:
         raise GAError(
             "Failed to create repo. Probably a repo with this name "
@@ -669,11 +704,11 @@ def delete_repo(domain, repo):
 
 @domaincmd
 def set_domain_admin(domain, user):
+    domainid = need_domain_id(domain)
+    userid = need_user_id(user)
     if user == 'root':
         print("No need to make the root admin a domain admin", file=sys.stderr)
         return
-    domainid = need_domain_id(domain)
-    userid = need_user_id(user)
     conn.execute('INSERT OR IGNORE INTO admin (domainid, userid) '
                  'VALUES (?, ?)', (domainid, userid))
 
@@ -686,14 +721,14 @@ def unset_domain_admin(domain, user):
 
 @domaincmd
 def set_perm(domain, repo, user, perm):
-    if user == 'root':
-        print("No need to add permissions for the root admin", file=sys.stderr)
-        return
     repoid = need_repo_id(domain, repo)
     userid = need_user_id(user)
     mode = { 'none': -1, 'R': 0, 'RW': 1 }.get(perm)
     if mode is None:
         raise InvalidArgument("Permissions must be one of none, R or RW")
+    if user == 'root':
+        print("No need to add permissions for the root admin", file=sys.stderr)
+        return
     if mode == -1:
         conn.execute('DELETE FROM permissions '
                      'WHERE repoid = ? AND userid = ?', (repoid, userid))
@@ -704,7 +739,7 @@ def set_perm(domain, repo, user, perm):
 @rootcmd
 def users():
     rs = conn.execute("""
-        SELECT U.id, U.name, U.fullname
+        SELECT U.name, U.comment
         FROM   user U
     """)
     for r in rs:
@@ -731,10 +766,11 @@ def su(user, *args):
         is_root = loguser == 'root'
 
 @rootcmd
-def create_domain(domain, fullname):
+def create_domain(domain, comment):
     need_valid_domainname(domain)
-    conn.execute('INSERT INTO domain (name, fullname) '
-                 'VALUES (?, ?)', (domain, fullname))
+    need_valid_domaincomment(comment)
+    conn.execute('INSERT INTO domain (name, comment) '
+                 'VALUES (?, ?)', (domain, comment))
     create_domain_dir(domain)
 
 @rootcmd
@@ -750,17 +786,18 @@ def delete_domain(domain):
     delete_domain_dir(domain)
 
 @rootcmd
-def create_user(user, fullname):
+def create_user(user, comment):
     need_valid_username(user)
-    conn.execute('INSERT INTO user (name, fullname) '
-                 'VALUES (?, ?)', (user, fullname))
+    need_valid_usercomment(comment)
+    conn.execute('INSERT INTO user (name, comment) '
+                 'VALUES (?, ?)', (user, comment))
 
 @rootcmd
 def delete_user(user):
+    userid = need_user_id(user)
     if (user == 'root'):
         print('WARNING: Refusing to delete root user', file=sys.stderr)
         return
-    userid = need_user_id(user)
     conn.execute('DELETE FROM sshkey WHERE userid = ?', (userid,))
     conn.execute('DELETE FROM admin WHERE userid = ?', (userid,))
     conn.execute('DELETE FROM permissions WHERE userid = ?', (userid,))
@@ -793,7 +830,7 @@ def exec_cmd_array(cmd):
     except TypeError:
         # for now, let's hope this is true
         # using inspection before calling func would be overkill
-        raise InvalidArgument("wrong number of arguments")
+        raise InvalidArgument("wrong number of arguments: {}".format(name))
 
 def split_cmdline(cmdline):
     cmdline = cmdline.strip()
