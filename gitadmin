@@ -303,7 +303,8 @@ def create_authorized_keys():
 def write_ssh_authorized_keys():
     rs = conn.execute("""
         SELECT U.name, S.algo, S.key, S.comment
-        FROM user U JOIN sshkey S ON U.id = S.userid
+        FROM   user U JOIN sshkey S ON U.id = S.userid
+        ORDER BY U.name
     """)
     rs = list(rs)
     fpath = authorized_keys_filepath()
@@ -468,6 +469,7 @@ def warn_unadministered_domains():
         WHERE  NOT EXISTS (SELECT 1
                            FROM admin A
                            WHERE D.id = A.domainid)
+        ORDER BY D.name
     """)
     for r in rs:
         print("WARNING: Domain has no admin: {}".format(r[0]), file=sys.stderr)
@@ -586,12 +588,14 @@ def domains():
         rs = conn.execute("""
             SELECT D.name, D.comment
             FROM   domain D
+            ORDER BY D.name
         """)
     else:
         rs = conn.execute("""
             SELECT D.name, D.comment
             FROM   domain D JOIN Admin A ON D.id = A.domainid
             WHERE  A.userid = ?
+            ORDER BY D.name
         """, (loguid,))
     print_table(rs)
 
@@ -610,6 +614,7 @@ def perms():
                 JOIN domain D ON D.id = R.domainid
         WHERE
                 U.id = ?
+        ORDER BY D.name, R.name, U.name
     """, (loguid,))
     print_table(rs)
 
@@ -673,6 +678,8 @@ def admins(domain):
                   ON A.userid = U.id
         WHERE
                 D.id = ?
+        ORDER BY
+                D.name, U.name
     """, (domainid,))
     print_table(rs)
 
@@ -683,6 +690,7 @@ def repos(domain):
         SELECT R.name, R.comment
         FROM   repo R
         WHERE  R.domainid = ?
+        ORDER BY R.name
     """, (domainid,))
     print_table(rs)
 
@@ -706,6 +714,8 @@ def repo_perms(domain, repo):
                   ON P.userid = U.id
         WHERE
                 R.id = ?
+        ORDER BY
+                D.name, R.name, U.name
     """, (repoid,))
     print_table(rs)
 
@@ -770,6 +780,8 @@ def users():
     rs = conn.execute("""
         SELECT U.name, U.comment
         FROM   user U
+        WHERE name <> "root"
+        ORDER BY U.name
     """)
     print_table(rs)
 
