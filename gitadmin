@@ -602,15 +602,12 @@ def perms():
                 D.name,
                 R.name,
                 U.name,
-                CASE WHEN mode=0 THEN "R" ELSE "RW" END
+                CASE P.mode WHEN 0 THEN "R" ELSE "RW" END
         FROM
-                domain D
-                JOIN repo R
-                  ON D.id = R.domainid
-                JOIN permissions P
-                  on R.id = P.repoid
-                JOIN user U
-                  on P.userid = U.id
+                permissions P
+                JOIN user U   ON P.userid = U.id
+                JOIN repo R   ON P.repoid = R.id
+                JOIN domain D ON D.id = R.domainid
         WHERE
                 U.id = ?
     """, (loguid,))
