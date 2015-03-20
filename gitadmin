@@ -179,7 +179,7 @@ INSERT INTO user (id, name, comment) VALUES (0, "root", "");
 
 domainname_regex = r'[abcdefghijklmnopqrstuvwxyz]{2,16}'
 username_regex   = r'[abcdefghijklmnopqrstuvwxyz]{2,16}'
-reponame_regex   = r'[abcdefghijklmnopqrstuvwxyz0123456789-]{2,16}'
+reponame_regex   = r'[abcdefghijklmnopqrstuvwxyz0123456789-]{2,32}'
 # XXX
 domaincomment_regex = (
     r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
