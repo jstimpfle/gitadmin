@@ -900,7 +900,8 @@ def split_cmdline(cmdline):
 
 def exec_cmdline(cmdline):
     cmd_array = split_cmdline(cmdline)
-    return exec_cmd_array(cmd_array)
+    if cmd_array:
+        exec_cmd_array(cmd_array)
 
 def exec_git_cmdline(ssh_original_command):
     # probably git-* will recognize 8bit unclean streams themselves...
