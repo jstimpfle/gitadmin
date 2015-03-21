@@ -21,12 +21,11 @@ conn = None
 is_stdin_tty = os.isatty(sys.stdin.fileno())
 is_stdout_tty = os.isatty(sys.stdout.fileno())
 is_stderr_tty = os.isatty(sys.stderr.fileno())
-# This will be determined when the command line is parsed.
-# Its value will depend on is_std{in,out,err}_tty and the run mode.
+# This is determined when the command line is parsed.
 # Once set, it remains constant
 is_interactive = None
-# these will be set when the database connection is made
-# (that means, not for --help and --init run modes)
+# these are set when the database connection is made
+# (=> not for --help and --init run modes)
 # They remain constant once set, except they might be temporarily swapped by
 # "su"
 loguser = None
@@ -46,7 +45,7 @@ gitadmin invocation:
     SSH_ORIGINAL_CMD=GITCMD gitadmin [-u USER]
 """
 
-long_usage = short_usage + """
+long_usage = short_usage + r"""
 Valid gitadmin COMMANDs can be listed with "gitadmin info"
 
 In the first case, print this help message.
@@ -70,7 +69,7 @@ double quotes. Inside double quotes, the special sequences \\ and \" are
 interpreted to mean the characters \ and " respectively, but otherwise the
 string is taken literally.  Example gitadmin shellscript line:
 
-create_user john "John \\"yo mama's fat\\" Doe"
+create_user john "John \"yo mama's fat\" Doe"
 
 In the fifth case, run the gitadmin shell in noninteractive mode over COMMAND
 which must be a single argument. Example gitadmin invocation from sh:
@@ -79,7 +78,8 @@ which must be a single argument. Example gitadmin invocation from sh:
 
 In the sixth case, validate the environment variable SSH_ORIGINAL_CMD as an
 allowed git request (git-receive-pack 'DOMAIN/REPO' or git-uploadpack
-'DOMAIN/REPO') and execute it."""
+'DOMAIN/REPO') and execute it.
+"""
 
 shell_intro = """
 Welcome to gitadmin.
@@ -180,26 +180,17 @@ INSERT INTO user (id, name, comment) VALUES (0, "root", "");
 
 domainname_regex = r'[abcdefghijklmnopqrstuvwxyz]{2,16}'
 username_regex   = r'[abcdefghijklmnopqrstuvwxyz]{2,16}'
-reponame_regex   = r'[abcdefghijklmnopqrstuvwxyz0123456789-]{2,16}'
-# XXX
-domaincomment_regex = (
-    r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    "'" r'0123456789 &()\+,\./<>@-]{0,255}'
-)
-# XXX
-usercomment_regex = (
-    r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '
-    "'" r'\+.<>@-]{0,63}'
-)
-# XXX
-repocomment_regex = (
-    r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    "'" r'0123456789 &()\+,\./<>@-]{0,255}'
-)
+reponame_regex   = r'[abcdefghijklmnopqrstuvwxyz0123456789-]{2,32}'
+domaincomment_regex = (r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                       "'" r'0123456789 &()\+,\./<>@-]{0,255}')  # XXX
+usercomment_regex = (r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '
+                     "'" r'\+.<>@-]{0,63}')  # XXX
+repocomment_regex = (r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                     "'" r'0123456789 &()\+,\./<>@-]{0,255}')  # XXX
 algo_regex       = (r'(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp256'
                     r'|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)')
 key_regex        = (r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-                    r'0123456789\+/]{32,8192}={0,2}')  # wild guesses
+                    r'0123456789\+/]{32,8192}={0,2}')  # XXX: wild guesses
 comment_regex    = (r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
                     r'0123456789\+/@-]{0,63}')
 
@@ -209,23 +200,20 @@ domain_cmds = {}
 root_cmds = {}
 
 class GAError(Exception):
-    """Expected conditions in gitadmin"""
+    """Expected error conditions in gitadmin"""
     pass
 
 class InvalidArgument(GAError):
     def __str__(self):
-        return 'Invalid Argument: {}'.format(*self.args)
+        return "Invalid Argument: {}".format(*self.args)
 
 class Unauthorized(GAError):
     def __str__(self):
-        return 'Permission denied: {}'.format(*self.args)
+        return "Permission denied: {}".format(*self.args)
 
 class GitAdminShell(cmd.Cmd):
     def __init__(self, intro='', prompt=''):
         super().__init__()
-
-    intro = shell_intro
-    prompt = shell_prompt
 
     def emptyline(self):
         pass
@@ -247,9 +235,12 @@ class GitAdminShell(cmd.Cmd):
         try:
             super().cmdloop()
         except KeyboardInterrupt as e:
-            print('')
+            print()
             self.intro = None  # HACK
             self.cmdloop()
+
+    intro = shell_intro
+    prompt = shell_prompt
 
 def basedir_filepath():
     return config['basedir']
@@ -280,7 +271,7 @@ def connect_database():
         raise GAError("Database doesn't exist. Call 'gitadmin --init'")
     conn = sqlite3.connect(dbpath)
     conn.isolation_level = None
-    conn.execute('PRAGMA FOREIGN_KEYS = ON')
+    conn.execute("PRAGMA FOREIGN_KEYS = ON")
 
 def disconnect_database():
     global conn
@@ -291,7 +282,7 @@ def create_database():
     dbpath = database_filepath()
     c = sqlite3.connect(dbpath)
     c.isolation_level = None
-    c.execute('PRAGMA FOREIGN_KEYS = ON')
+    c.execute("PRAGMA FOREIGN_KEYS = ON")
     c.executescript(sqlschema)
     c.close()
 
@@ -301,18 +292,11 @@ def create_authorized_keys():
     f.write(authorized_keys_header)
     f.close()
 
-def write_ssh_authorized_keys():
-    rs = conn.execute("""
-        SELECT U.name, S.algo, S.key, S.comment
-        FROM user U JOIN sshkey S ON U.id = S.userid
-    """)
-    rs = list(rs)
+def replace_ssh_authorized_keys(contents):
     fpath = authorized_keys_filepath()
     tmp = fpath + '.tmp'
     f = open(tmp, 'w')
-    f.write(authorized_keys_header)
-    for r in rs:
-        f.write('command="gitadmin -u {}" {} {} {}\n'.format(*r))
+    f.write(authorized_keys_header + contents)
     f.close()
     os.rename(tmp, fpath)
 
@@ -383,15 +367,11 @@ def need_valid_sshkey(x):
     if m is None:
         raise InvalidArgument("Sorry, I couldn't parse the ssh key")
     x, y, z = m.groups()
-    return x, y, (z or '')
+    return x, y, (z or "")
 
 def need_domain_id(domain):
     need_valid_domainname(domain)
-    rs = conn.execute("""
-        SELECT id
-        FROM   domain
-        WHERE  name = ?
-    """, (domain,))
+    rs = conn.execute("SELECT id FROM domain WHERE name = ?", (domain,))
     rs = list(rs)
     if not rs:
         raise GAError("domain does not exist: {}".format(domain))
@@ -399,11 +379,7 @@ def need_domain_id(domain):
 
 def need_user_id(user):
     need_valid_username(user)
-    rs = conn.execute("""
-        SELECT id
-        FROM   user
-        WHERE  name = ?
-    """, (user,))
+    rs = conn.execute("SELECT id FROM user WHERE name = ?", (user,))
     rs = list(rs)
     if not rs:
         raise GAError("user does not exist: {}".format(user))
@@ -417,22 +393,18 @@ def need_is_domain_admin(domain):
     domainid = need_domain_id(domain)
     if is_root:
         return
-    rs = conn.execute("""
-        SELECT 1
-        FROM   admin A
-        WHERE  A.domainid = ? and A.userid = ?
-    """, (domainid, loguid))
+    rs = conn.execute("SELECT 1 FROM admin A "
+                      "WHERE A.domainid = ? AND A.userid = ?",
+                      (domainid, loguid))
     rs = list(rs)
     if not rs:
         raise Unauthorized("You are not admin of {}".format(domain))
 
 def need_repo_id(domain, repo):
     need_valid_reponame(repo)
-    rs = conn.execute("""
-        SELECT R.id
-        FROM   repo R JOIN domain D On R.domainid = D.id
-        WHERE  R.name = ? AND D.name = ?
-    """, (repo, domain))
+    rs = conn.execute("SELECT R.id "
+                      "FROM repo R JOIN domain D ON R.domainid = D.id "
+                      "WHERE R.name = ? AND D.name = ?""", (repo, domain))
     rs = list(rs)
     if not rs:
         raise GAError("repo does not exist: {}/{}".format(domain, repo))
@@ -440,11 +412,8 @@ def need_repo_id(domain, repo):
 
 def need_read_permission(domain, repo):
     repoid = need_repo_id(domain, repo)
-    rs = conn.execute("""
-        SELECT 1
-        FROM permissions P
-        WHERE P.repoid = ? AND P.userid = ?
-    """, (repoid, loguid))
+    rs = conn.execute("SELECT 1 FROM permissions P "
+                      "WHERE P.repoid = ? AND P.userid = ?", (repoid, loguid))
     rs = list(rs)
     if not rs:
         raise Unauthorized("You don't have permission to read from {}/{}"
@@ -452,26 +421,29 @@ def need_read_permission(domain, repo):
 
 def need_write_permission(domain, repo):
     repoid = need_repo_id(domain, repo)
-    rs = conn.execute("""
-        SELECT 1
-        FROM   permissions P
-        WHERE  P.repoid = ? AND P.userid = ? AND P.mode = 1
-    """, (repoid, loguid))
+    rs = conn.execute("SELECT 1 FROM permissions P "
+                      "WHERE P.repoid = ? AND P.userid = ? AND P.mode = 1",
+                      (repoid, loguid))
     rs = list(rs)
     if not rs:
         raise Unauthorized("You don't have permission to write to {}/{}"
                            .format(domain, repo))
 
 def warn_unadministered_domains():
-    rs = conn.execute("""
-        SELECT D.name
-        FROM   domain D
-        WHERE  NOT EXISTS (SELECT 1
-                           FROM admin A
-                           WHERE D.id = A.domainid)
-    """)
+    rs = conn.execute("SELECT D.name FROM domain D "
+                      "WHERE NOT EXISTS "
+                      "(SELECT 1 FROM admin A WHERE D.id = A.domainid) "
+                      "ORDER BY D.name")
     for r in rs:
         print("WARNING: Domain has no admin: {}".format(r[0]), file=sys.stderr)
+
+def format_authorized_keys_line(user, algo, key, comment):
+    tpl = """command="gitadmin -u {}" {} {} {}\n"""
+    return tpl.format(user, algo, key, comment)
+
+def format_authorized_keys(rs):
+    lines = [format_authorized_keys_line(*r) for r in rs]
+    return authorized_keys_header + ''.join(lines)
 
 def format_table(rs):
     """format a list of lists of things nicely for the user
@@ -499,25 +471,33 @@ def print_table(rs):
         for r in rs:
             print('\t'.join(str(c) for c in r))
 
+def update_ssh_authorized_keys():
+    rs = conn.execute("SELECT U.name, S.algo, S.key, S.comment "
+                      "FROM user U JOIN sshkey S ON U.id = S.userid")
+    cts = format_authorized_keys(rs)
+    replace_ssh_authorized_keys(cts)
+
 def transaction(cmd):
     def func(*args, **kwargs):
-        conn.execute('BEGIN TRANSACTION')
+        conn.execute("BEGIN TRANSACTION")
         try:
             try:
                 r = cmd(*args, **kwargs)
             except sqlite3.IntegrityError as e:
+                # TODO: Ensure all expected database error conditions are
+                # handled locally, and leave this error a non-GAError
                 raise GAError(
-                    'The database issued an integrity constraint error. '
-                    'If you tried to delete data, that probably means that '
-                    'there are leftover dependencies. '
-                    'If you tried to input data, that probably means that '
-                    'such an entry already exists. The database error was: {}'
+                    "The database issued an integrity constraint error. "
+                    "If you tried to delete data, that probably means that "
+                    "there are leftover dependencies. "
+                    "If you tried to input data, that probably means that "
+                    "such an entry already exists. The database error was: {}"
                     .format(e)
                 )
         except:
-            conn.execute('ROLLBACK')
+            conn.execute("ROLLBACK")
             raise
-        conn.execute('COMMIT')
+        conn.execute("COMMIT")
         return r
     return func
 
@@ -575,46 +555,31 @@ def whoami():
 @usercmd
 def domains():
     if is_root:
-        rs = conn.execute("""
-            SELECT D.name, D.comment
-            FROM   domain D
-        """)
+        rs = conn.execute("SELECT D.name, D.comment FROM domain D "
+                          "ORDER BY D.name")
     else:
-        rs = conn.execute("""
-            SELECT D.name, D.comment
-            FROM   domain D JOIN Admin A ON D.id = A.domainid
-            WHERE  A.userid = ?
-        """, (loguid,))
+        rs = conn.execute("SELECT D.name, D.comment "
+                          "FROM domain D JOIN Admin A ON D.id = A.domainid "
+                          "WHERE A.userid = ? "
+                          "ORDER BY D.name", (loguid,))
     print_table(rs)
 
 @usercmd
 def perms():
     rs = conn.execute("""
-        SELECT
-                D.name,
-                R.name,
-                U.name,
-                CASE WHEN mode=0 THEN "R" ELSE "RW" END
-        FROM
-                domain D
-                JOIN repo R
-                  ON D.id = R.domainid
-                JOIN permissions P
-                  on R.id = P.repoid
-                JOIN user U
-                  on P.userid = U.id
-        WHERE
-                U.id = ?
-    """, (loguid,))
+        SELECT D.name, R.name, U.name, CASE WHEN P.mode=0 THEN "R" ELSE "RW" END
+        FROM domain D
+             JOIN repo R ON D.id = R.domainid
+             JOIN permissions P on R.id = P.repoid
+             JOIN user U on P.userid = U.id
+        WHERE U.id = ?
+        ORDER BY D.name, R.name""", (loguid,))
     print_table(rs)
 
 @usercmd
 def sshkeys():
-    rs = conn.execute("""
-        SELECT S.algo, S.key, S.comment
-        FROM   sshkey S
-        WHERE  S.userid = ?
-    """, (loguid,))
+    rs = conn.execute("SELECT S.algo, S.key, S.comment "
+                      "FROM sshkey S WHERE S.userid = ?", (loguid,))
     for r in rs:
         print(' '.join(r))
 
@@ -628,13 +593,12 @@ def add_sshkey():
     line = sys.stdin.readline()
     algo, key, comment = need_valid_sshkey(line)
     try:
-        conn.execute('INSERT INTO sshkey (userid, algo, key, comment) '
-                     'VALUES (?, ?, ?, ?)', (loguid, algo, key, comment))
+        conn.execute("INSERT INTO sshkey (userid, algo, key, comment) "
+                     "VALUES (?, ?, ?, ?)", (loguid, algo, key, comment))
     except sqlite3.IntegrityError as e:
-        raise GAError("Couldn't add ssh key. That probably means this key is "
-                      "already in the database. The DB error: {}".format(e))
+        raise GAError("This key is already in the database")  # or user deleted
     else:
-        write_ssh_authorized_keys()
+        update_ssh_authorized_keys()
 
 @usercmd
 def remove_sshkey():
@@ -643,13 +607,12 @@ def remove_sshkey():
               "just as returned by 'sshkeys'", file=sys.stderr)
     line = sys.stdin.readline()
     algo, key, _ = need_valid_sshkey(line)
-    conn.execute('DELETE FROM sshkey '
-                 'WHERE userid = ? AND key = ?',
-                 (loguid, key))
-    rs = conn.execute('SELECT total_changes()')
+    conn.execute("DELETE FROM sshkey "
+                 "WHERE userid = ? AND key = ?", (loguid, key))
+    rs = conn.execute("SELECT total_changes()")
     rs = list(rs)
     if rs[0][0]:
-        write_ssh_authorized_keys()
+        update_ssh_authorized_keys()
     else:
         print("WARNING: Key not found", file=sys.stderr)
 
@@ -657,28 +620,19 @@ def remove_sshkey():
 def admins(domain):
     domainid = need_domain_id(domain)
     rs = conn.execute("""
-        SELECT
-                D.name,
-                U.name
-        FROM
-                admin A
-                JOIN domain D
-                  ON A.domainid = D.id
-                JOIN user U
-                  ON A.userid = U.id
-        WHERE
-                D.id = ?
-    """, (domainid,))
+        SELECT D.name, U.name
+        FROM admin A
+             JOIN domain D ON A.domainid = D.id
+             JOIN user U ON A.userid = U.id
+        WHERE D.id = ?
+        ORDER BY U.name""", (domainid,))
     print_table(rs)
 
 @domaincmd
 def repos(domain):
     domainid = need_domain_id(domain)
-    rs = conn.execute("""
-        SELECT R.name, R.comment
-        FROM   repo R
-        WHERE  R.domainid = ?
-    """, (domainid,))
+    rs = conn.execute("SELECT R.name, R.comment FROM repo R "
+                      "WHERE R.domainid = ? ORDER BY R.name", (domainid,))
     print_table(rs)
 
 @domaincmd
@@ -686,22 +640,13 @@ def repo_perms(domain, repo):
     domainid = need_domain_id(domain)
     repoid = need_repo_id(domain, repo)
     rs = conn.execute("""
-        SELECT
-                D.name,
-                R.name,
-                U.name,
-                CASE WHEN mode=0 THEN "R" ELSE "RW" END
-        FROM
-                domain D
-                JOIN repo R
-                  ON D.id = R.domainid
-                JOIN permissions P
-                  ON R.id = P.repoid
-                JOIN user U
-                  ON P.userid = U.id
-        WHERE
-                R.id = ?
-    """, (repoid,))
+        SELECT D.name, R.name, U.name, CASE WHEN P.mode=0 THEN "R" ELSE "RW" END
+        FROM domain D
+             JOIN repo R ON D.id = R.domainid
+             JOIN permissions P ON R.id = P.repoid
+             JOIN user U ON P.userid = U.id
+        WHERE R.id = ?
+        ORDER BY U.name""", (repoid,))
     print_table(rs)
 
 @domaincmd
@@ -710,62 +655,57 @@ def create_repo(domain, repo, comment):
     need_valid_reponame(repo)
     need_valid_repocomment(comment)
     try:
-        conn.execute('INSERT INTO repo (domainid, name, comment) '
-                     'VALUES (?, ?, ?)', (domainid, repo, comment))
-    except sqlite3.IntegrityError as e:
-        raise GAError(
-            "Failed to create repo. Probably a repo with this name "
-            "already exists in this domain. DB error was: {}".format(e)
-        )
+        conn.execute("INSERT INTO repo (domainid, name, comment) "
+                     "VALUES (?, ?, ?)", (domainid, repo, comment))
+    except sqlite3.IntegrityError:
+        # XXX: or domain doesn't exist
+        raise GAError("A repo with this name already exists in this domain")
     create_repo_git(domain, repo)
 
 @domaincmd
 def delete_repo(domain, repo):
     repoid = need_repo_id(domain, repo)
-    conn.execute('DELETE FROM permissions WHERE repoid = ?', (repoid,))
-    conn.execute('DELETE FROM repo WHERE id = ?', (repoid,))
+    conn.execute("DELETE FROM permissions WHERE repoid = ?", (repoid,))
+    conn.execute("DELETE FROM repo WHERE id = ?", (repoid,))
     delete_repo_git(domain, repo)
 
 @domaincmd
 def set_domain_admin(domain, user):
     domainid = need_domain_id(domain)
     userid = need_user_id(user)
-    if user == 'root':
+    if user == "root":
         print("No need to make the root admin a domain admin", file=sys.stderr)
         return
-    conn.execute('INSERT OR IGNORE INTO admin (domainid, userid) '
-                 'VALUES (?, ?)', (domainid, userid))
+    conn.execute("INSERT OR IGNORE INTO admin (domainid, userid) "
+                 "VALUES (?, ?)", (domainid, userid))
 
 @domaincmd
 def unset_domain_admin(domain, user):
     domainid = need_domain_id(domain)
     userid = need_user_id(user)
-    conn.execute('DELETE FROM admin WHERE domainid = ? AND userid = ?',
+    conn.execute("DELETE FROM admin WHERE domainid = ? AND userid = ?",
                  (domainid, userid))
 
 @domaincmd
 def set_perm(domain, repo, user, perm):
     repoid = need_repo_id(domain, repo)
     userid = need_user_id(user)
-    mode = { 'none': -1, 'R': 0, 'RW': 1 }.get(perm)
+    mode = { "none": -1, "R": 0, "RW": 1 }.get(perm)
     if mode is None:
         raise InvalidArgument("Permissions must be one of none, R or RW")
-    if user == 'root':
+    if user == "root":
         print("No need to add permissions for the root admin", file=sys.stderr)
         return
     if mode == -1:
-        conn.execute('DELETE FROM permissions '
-                     'WHERE repoid = ? AND userid = ?', (repoid, userid))
+        conn.execute("DELETE FROM permissions "
+                     "WHERE repoid = ? AND userid = ?", (repoid, userid))
     else:
-        conn.execute('INSERT OR REPLACE INTO permissions (repoid,userid,mode) '
-                     'VALUES (?, ?, ?)', (repoid, userid, mode))
+        conn.execute("INSERT OR REPLACE INTO permissions (repoid,userid,mode) "
+                     "VALUES (?, ?, ?)", (repoid, userid, mode))
 
 @rootcmd
 def users():
-    rs = conn.execute("""
-        SELECT U.name, U.comment
-        FROM   user U
-    """)
+    rs = conn.execute("SELECT U.name, U.comment FROM user U")
     print_table(rs)
 
 @sucmd
@@ -780,53 +720,51 @@ def su(user, *args):
     stored_loguid = loguid
     loguser = user
     loguid = userid
-    is_root = loguser == 'root'
+    is_root = loguser == "root"
     try:
         exec_cmd_array(args)
     finally:
         loguser = stored_loguser
         loguid = stored_loguid
-        is_root = loguser == 'root'
+        is_root = loguser == "root"
 
 @rootcmd
 def create_domain(domain, comment):
     need_valid_domainname(domain)
     need_valid_domaincomment(comment)
-    conn.execute('INSERT INTO domain (name, comment) '
-                 'VALUES (?, ?)', (domain, comment))
+    conn.execute("INSERT INTO domain (name, comment) "
+                 "VALUES (?, ?)", (domain, comment))
     create_domain_dir(domain)
 
 @rootcmd
 def delete_domain(domain):
     domainid = need_domain_id(domain)
-    conn.execute('DELETE FROM admin WHERE domainid = ?', (domainid,))
+    conn.execute("DELETE FROM admin WHERE domainid = ?", (domainid,))
     try:
-        conn.execute('DELETE FROM domain WHERE id = ?', (domainid,))
+        conn.execute("DELETE FROM domain WHERE id = ?", (domainid,))
     except sqlite3.IntegrityError as e:
-        raise GAError('Database integrity error. That probably means that '
-                      'this domain has still repositories in it. DB error: {}'
-                      .format(e))
+        raise GAError("Can't delete domain since it contains repositories")
     delete_domain_dir(domain)
 
 @rootcmd
 def create_user(user, comment):
     need_valid_username(user)
     need_valid_usercomment(comment)
-    conn.execute('INSERT INTO user (name, comment) '
-                 'VALUES (?, ?)', (user, comment))
+    conn.execute("INSERT INTO user (name, comment) "
+                 "VALUES (?, ?)", (user, comment))
 
 @rootcmd
 def delete_user(user):
     userid = need_user_id(user)
-    if (user == 'root'):
-        print('WARNING: Refusing to delete root user', file=sys.stderr)
+    if (user == "root"):
+        print("WARNING: Refusing to delete root user", file=sys.stderr)
         return
-    conn.execute('DELETE FROM sshkey WHERE userid = ?', (userid,))
-    conn.execute('DELETE FROM admin WHERE userid = ?', (userid,))
-    conn.execute('DELETE FROM permissions WHERE userid = ?', (userid,))
-    conn.execute('DELETE FROM user WHERE id = ?', (userid,))
+    conn.execute("DELETE FROM sshkey WHERE userid = ?", (userid,))
+    conn.execute("DELETE FROM admin WHERE userid = ?", (userid,))
+    conn.execute("DELETE FROM permissions WHERE userid = ?", (userid,))
+    conn.execute("DELETE FROM user WHERE id = ?", (userid,))
     warn_unadministered_domains()
-    write_ssh_authorized_keys()
+    update_ssh_authorized_keys()
 
 def git_receive_pack(domain, repo):
     need_write_permission(domain, repo)
@@ -871,7 +809,7 @@ def split_cmdline(cmdline):
         elif char == '"':
             quoted = not quoted
             started = True
-        # XXX: .isspace() supports locales. (good thing?)
+        # XXX: .isspace() supports locales. Good thing?
         elif char.isspace() and not quoted:
             if started:
                 cmd.append(word)
@@ -881,29 +819,28 @@ def split_cmdline(cmdline):
             word += char
             started = True
     if quoted:
-        raise InvalidArgument("Unterminated quote in command line {}"
-                              .format(cmdline))
+        raise InvalidArgument("Unterminated quote: {}".format(cmdline))
     if escaped:
-        raise InvalidArgument("Trailing escape character in command line {}"
-                              .format(cmdline))
+        raise InvalidArgument("Trailing escape character: {}".format(cmdline))
     if started:
         cmd.append(word)
     return cmd
 
 def exec_cmdline(cmdline):
     cmd_array = split_cmdline(cmdline)
-    return exec_cmd_array(cmd_array)
+    if cmd_array:
+        return exec_cmd_array(cmd_array)
 
 def exec_git_cmdline(ssh_original_command):
     # probably git-* will recognize 8bit unclean streams themselves...
     #need_8bitclean()
     regex = r"({}|{}) '({})/({})'".format(
-        'git-receive-pack', 'git-upload-pack', domainname_regex, reponame_regex
-    )
+        'git-receive-pack', 'git-upload-pack', domainname_regex, reponame_regex)
     m = exact_match(regex, ssh_original_command)
     if m is None:
         raise InvalidArgument(
-            "Got {}, but only\n"
+            "Invalid command: {}\n"
+            "Only\n"
             "\tgit-receive-pack 'DOMAIN/REPO'\n"
             "\tgit-upload-pack  'DOMAIN/REPO'\n"
             "are allowed commands (DOMAIN and REPO must be valid names)."
@@ -952,17 +889,17 @@ def login_user(user):
     global loguser
     global loguid
     global is_root
-    loguser = 'root'
+    loguser = "root"
     loguid = 0
     loguid = need_user_id(user)
     loguser = user
-    is_root = loguser == 'root'
+    is_root = loguser == "root"
 
 def need_dbconn(cmd):
     def func(req_user, *args, **kwargs):
         connect_database()
         if req_user is None:
-            login_user('root')
+            login_user("root")
         else:
             login_user(req_user)
         try:
@@ -1068,13 +1005,13 @@ def main(argv, ssh_original_command=None):
     try:
         gitadmin(argv, ssh_original_command)
     except GAError as e:
-        print('gitadmin:', e, file=sys.stderr)
+        print("gitadmin:", e, file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print('gitadmin: Unexpected error:', e, file=sys.stderr)
+        print("gitadmin: Unexpected error:", e, file=sys.stderr)
         sys.exit(1)
-    except KeyboardInterrupt as e:
-        print('Keyboard interrupt', file=sys.stderr)
+    except KeyboardInterrupt:
+        print("Keyboard interrupt", file=sys.stderr)
 
 if __name__ == '__main__':
     main(sys.argv, os.getenv('SSH_ORIGINAL_COMMAND'))
