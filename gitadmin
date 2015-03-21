@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import itertools
 import os
 import re
 import readline, cmd
@@ -477,31 +478,22 @@ def format_table(rs):
     Returns a list of strings (the rows formatted with matching colum widths)
     """
     lens = []
-    i = 0
-    while True:
-        got = False
-        l = 0
-        for r in rs:
-            if i < len(r):
-                got = True
-                l = max(l, len(r[i]))
-        if not got:
-            break
-        lens.append(l)
-        i += 1
+    lensll = [[len(c) for c in r] for r in rs]
+    lensll = itertools.zip_longest(*lensll, fillvalue=0)
+    for lst in lensll:
+        lens.append(max(lst))
     out = []
     def lalign(s, n):
         return s + (" " * (n - len(s)))
     for r in rs:
-        outr = '\t'.join(lalign(str(c), l) for c, l in zip(r, lens))
-        out.append(outr)
+        fmtr = [lalign(str(c), l) for c, l in zip(r, lens)]
+        out.append('\t'.join(fmtr))
     return out
 
 def print_table(rs):
     rs = list(rs)
     if is_interactive:
-        rs = format_table(rs)
-        for r in rs:
+        for r in format_table(rs):
             print(r)
     else:
         for r in rs:
