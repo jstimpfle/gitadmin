@@ -700,7 +700,8 @@ def set_perm(domain, repo, user, perm):
 
 @rootcmd
 def users():
-    rs = conn.execute("SELECT U.name, U.comment FROM user U")
+    rs = conn.execute("SELECT U.name, U.comment FROM user U "
+                      "WHERE U.name <> \"root\"")
     print_table(rs)
 
 @sucmd
