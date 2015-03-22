@@ -655,8 +655,7 @@ def create_repo(domain, repo, comment):
         conn.execute("INSERT INTO repo (domainid, name, comment) "
                      "VALUES (?, ?, ?)", (domainid, repo, comment))
     except sqlite3.IntegrityError:
-        # XXX: or domain doesn't exist
-        raise GAError("A repo with this name already exists in this domain")
+        raise GAError("Repo exists: {}".format(repo))
     create_repo_git(domain, repo)
 
 @domaincmd
@@ -728,8 +727,11 @@ def su(user, *args):
 def create_domain(domain, comment):
     need_valid_domainname(domain)
     need_valid_domaincomment(comment)
-    conn.execute("INSERT INTO domain (name, comment) "
-                 "VALUES (?, ?)", (domain, comment))
+    try:
+        conn.execute("INSERT INTO domain (name, comment) "
+                     "VALUES (?, ?)", (domain, comment))
+    except sqlite3.IntegrityError:
+        raise GAError("Domain exists: {}".format(domain))
     create_domain_dir(domain)
 
 @rootcmd
@@ -746,8 +748,11 @@ def delete_domain(domain):
 def create_user(user, comment):
     need_valid_username(user)
     need_valid_usercomment(comment)
-    conn.execute("INSERT INTO user (name, comment) "
-                 "VALUES (?, ?)", (user, comment))
+    try:
+        conn.execute("INSERT INTO user (name, comment) "
+                     "VALUES (?, ?)", (user, comment))
+    except sqlite3.IntegrityError:
+        raise GAError("User exists: {}".format(user))
 
 @rootcmd
 def delete_user(user):
