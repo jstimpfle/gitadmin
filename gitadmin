@@ -101,13 +101,14 @@ Root admin commands:
 
 Domain admin commands:
 
-  admins DOMAIN                             User commands:
-  repos DOMAIN
-  repo_perms DOMAIN REPO                      info
-  set_domain_admin DOMAIN USER                whoami
-  unset_domain_admin DOMAIN USER              domains
-  create_repo DOMAIN REPO COMMENT             perms
-  delete_repo DOMAIN REPO                     sshkeys
+  admins DOMAIN
+  repos DOMAIN                              User commands:
+  repo_perms DOMAIN REPO
+  set_domain_admin DOMAIN USER                info
+  unset_domain_admin DOMAIN USER              whoami
+  create_repo DOMAIN REPO COMMENT             domains
+  delete_repo DOMAIN REPO                     perms
+  set_repo_comment DOMAIN REPO COMMENT        sshkeys
   set_perm DOMAIN REPO USER <none|R|RW>       add_sshkey
   set_public DOMAIN REPO <true|false>         remove_sshkey
 """
@@ -198,7 +199,7 @@ algo_regex       = (r'(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp256'
 key_regex        = (r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
                     r'0123456789\+/]{32,8192}={0,2}')  # XXX: wild guesses
 comment_regex    = (r'[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-                    r'0123456789\+/@-]{0,63}')
+                    r'0123456789\+./@-]{0,63}')
 
 dfl_cmds = {}
 user_cmds = {}
@@ -270,6 +271,10 @@ def repo_dirpath(domain, repo):
     dirpath = domain_dirpath(domain)
     return os.path.join(dirpath, repo) + '.git'
 
+def repo_comment_filepath(domain, repo):
+    dirpath = repo_dirpath(domain, repo)
+    return os.path.join(dirpath, 'description')
+
 def publicro_dirpath():
     dirpath = basedir_filepath()
     return os.path.join(dirpath, 'publicro')
@@ -331,12 +336,16 @@ def delete_domain_dir(domain):
     os.rmdir(dirpath)
 
 def create_repo_git(domain, reponame):
-    fpath = repo_dirpath(domain, reponame)
-    subprocess.call(["git", "init", "--bare", fpath])
+    path = repo_dirpath(domain, reponame)
+    subprocess.call(["git", "init", "--bare", path])
 
 def delete_repo_git(domain, reponame):
-    fpath = repo_dirpath(domain, reponame)
-    subprocess.call(["rm", "-rf", "--", fpath])
+    path = repo_dirpath(domain, reponame)
+    subprocess.call(["rm", "-rf", "--", path])
+
+def set_repo_comment_git(domain, repo, comment):
+    path = repo_comment_filepath(domain, repo)
+    open(path, "w").write(comment)
 
 def create_publicro_domain_dir(domain):
     dirpath = publicro_domain_dirpath(domain)
@@ -731,13 +740,20 @@ def create_repo(domain, repo, comment):
     except sqlite3.IntegrityError:
         raise GAError("Repo exists: {}".format(repo))
     create_repo_git(domain, repo)
+    set_repo_comment_git(domain, repo, comment)
 
 @domaincmd
 def delete_repo(domain, repo):
     repoid = need_repo_id(domain, repo)
+    conn.execute("DELETE FROM publicro WHERE repoid = ?", (repoid,))
     conn.execute("DELETE FROM permissions WHERE repoid = ?", (repoid,))
     conn.execute("DELETE FROM repo WHERE id = ?", (repoid,))
     delete_repo_git(domain, repo)
+
+@domaincmd
+def set_repo_comment(domain, repo, comment):
+    repoid = need_repo_id(domain, repo)
+    set_repo_comment_git(domain, repo, comment)
 
 @domaincmd
 def set_domain_admin(domain, user):
@@ -777,7 +793,7 @@ def set_public(domain, repo, boolean):
     repoid = need_repo_id(domain, repo)
     publish = { 'true': True, 'false': False }.get(boolean)
     if publish is None:
-        raise InvalidArgument("Usage: publish <DOMAIN> <REPO> <true|false>")
+        raise InvalidArgument("Usage: set_public <DOMAIN> <REPO> <true|false>")
     if publish:
         conn.execute("INSERT OR IGNORE INTO publicro (repoid) "
                      "VALUES (?)", (repoid,))
