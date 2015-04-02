@@ -100,15 +100,16 @@ Root admin commands:
    delete_user USER
 
 Domain admin commands:
-                                            User commands:
-  admins DOMAIN
-  repos DOMAIN                                info
-  repo_perms DOMAIN REPO                      whoami
-  set_domain_admin DOMAIN USER                domains
-  unset_domain_admin DOMAIN USER              perms
-  create_repo DOMAIN REPO COMMENT             sshkeys
-  delete_repo DOMAIN REPO                     add_sshkey
-  set_perm DOMAIN REPO USER <none|R|RW>       remove_sshkey
+
+  admins DOMAIN                             User commands:
+  repos DOMAIN
+  repo_perms DOMAIN REPO                      info
+  set_domain_admin DOMAIN USER                whoami
+  unset_domain_admin DOMAIN USER              domains
+  create_repo DOMAIN REPO COMMENT             perms
+  delete_repo DOMAIN REPO                     sshkeys
+  set_perm DOMAIN REPO USER <none|R|RW>       add_sshkey
+  set_public DOMAIN REPO <true|false>         remove_sshkey
 """
 
 authorized_keys_header = """\
@@ -172,6 +173,12 @@ CREATE TABLE sshkey
 --
 , FOREIGN KEY (userid) REFERENCES user(id)
 , UNIQUE (key)
+);
+
+CREATE TABLE publicro
+( repoid INTEGER NOT NULL UNIQUE
+--
+, FOREIGN KEY (repoid) REFERENCES repo(id)
 );
 
 INSERT INTO user (id, name, comment) VALUES (0, "root", "");
@@ -263,6 +270,18 @@ def repo_dirpath(domain, repo):
     dirpath = domain_dirpath(domain)
     return os.path.join(dirpath, repo) + '.git'
 
+def publicro_dirpath():
+    dirpath = basedir_filepath()
+    return os.path.join(dirpath, 'publicro')
+
+def publicro_domain_dirpath(domain):
+    dirpath = publicro_dirpath()
+    return os.path.join(dirpath, domain)
+
+def publicro_repo_dirpath(domain, repo):
+    dirpath = publicro_domain_dirpath(domain)
+    return os.path.join(dirpath, repo)
+
 def connect_database():
     global conn
     dbpath = database_filepath()
@@ -318,6 +337,28 @@ def create_repo_git(domain, reponame):
 def delete_repo_git(domain, reponame):
     fpath = repo_dirpath(domain, reponame)
     subprocess.call(["rm", "-rf", "--", fpath])
+
+def create_publicro_domain_dir(domain):
+    dirpath = publicro_domain_dirpath(domain)
+    os.mkdir(dirpath)
+
+def delete_publicro_domain_dir(domain):
+    dirpath = publicro_domain_dirpath(domain)
+    os.rmdir(dirpath)
+
+def update_publicro_symlink(domain, repo, publish):
+    dirpath = repo_dirpath(domain, repo)
+    linkpath = publicro_repo_dirpath(domain, repo)
+    if publish:
+        try:
+            os.symlink(dirpath, linkpath)
+        except OSError as e:
+            raise GAError('Failed to create symlink: {}'.format(e))
+    else:
+        try:
+            os.unlink(linkpath)
+        except OSError as e:
+            raise GAError('Failed to remove symlink: {}'.format(e))
 
 def exact_match(regex, x):
     return re.match(r'^' + regex + r'$', x)
@@ -639,7 +680,7 @@ def remove_sshkey():
     algo, key, _ = need_valid_sshkey(line)
     conn.execute("DELETE FROM sshkey "
                  "WHERE userid = ? AND key = ?", (loguid, key))
-    rs = conn.execute("SELECT total_changes()")
+    rs = conn.execute("SELECT changes()")
     rs = list(rs)
     if rs[0][0]:
         update_ssh_authorized_keys()
@@ -731,6 +772,22 @@ def set_perm(domain, repo, user, perm):
         conn.execute("INSERT OR REPLACE INTO permissions (repoid,userid,mode) "
                      "VALUES (?, ?, ?)", (repoid, userid, mode))
 
+@domaincmd
+def set_public(domain, repo, boolean):
+    repoid = need_repo_id(domain, repo)
+    publish = { 'true': True, 'false': False }.get(boolean)
+    if publish is None:
+        raise InvalidArgument("Usage: publish <DOMAIN> <REPO> <true|false>")
+    if publish:
+        conn.execute("INSERT OR IGNORE INTO publicro (repoid) "
+                     "VALUES (?)", (repoid,))
+    else:
+        conn.execute("DELETE FROM publicro WHERE repoid = ?", (repoid,))
+    rs = conn.execute("SELECT changes()")
+    rs = list(rs)
+    if rs[0][0] != 0:
+        update_publicro_symlink(domain, repo, publish)
+
 @rootcmd
 def users():
     rs = conn.execute("SELECT U.name, U.comment FROM user U "
@@ -767,6 +824,7 @@ def create_domain(domain, comment):
     except sqlite3.IntegrityError:
         raise GAError("Domain exists: {}".format(domain))
     create_domain_dir(domain)
+    create_publicro_domain_dir(domain)
 
 @rootcmd
 def delete_domain(domain):
@@ -777,6 +835,7 @@ def delete_domain(domain):
     except sqlite3.IntegrityError as e:
         raise GAError("Can't delete domain since it contains repositories")
     delete_domain_dir(domain)
+    delete_publicro_domain_dir(domain)
 
 @rootcmd
 def create_user(user, comment):
