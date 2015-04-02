@@ -61,9 +61,10 @@ parse_sshkey _ = Left "SSH keys consist of three components"
 
 main :: IO ()
 main = do
-  (parse_args <$> getArgs) >>= \case
-    Left msg      -> putStrLn msg
-    Right runconf -> gitadmin runconf
+  r <- parse_args <$> getArgs
+  case r of
+    Left msg   -> putStrLn msg
+    Right conf -> gitadmin conf
 
 parse_args :: [String] -> Either String RunConf
 parse_args = \case
@@ -76,22 +77,11 @@ parse_call :: [String] -> Either String GaCall
 parse_call ("-c":scr:rest) = guard (length rest == 0) >> return (CallScript scr)
 parse_call args = return $ if null args then CallInteractive else CallArray args
 
-show_help :: IO ()
-show_help = putStr long_usage
-
 long_usage :: String
 long_usage = "Usage: TODO\n"
 
 init_ga_env :: IO ()
 init_ga_env = undefined
-
-mk_ctx :: IO GaCtx
-mk_ctx = GaCtx "/home/jfs" undefined
-               stdin stdout stderr
-               (Userid 0) (Username "root")
-               <$> (queryTerminal =<< handleToFd stdin)
-               <*> (queryTerminal =<< handleToFd stdout)
-               <*> (queryTerminal =<< handleToFd stderr)
 
 -- =====================================================================
 -- software interface
@@ -131,8 +121,16 @@ parse_cmd_array xs = go xs where
 parse_script :: String -> Either String (GaCmd ())
 parse_script = undefined
 
-get_ctx :: GaIO GaCtx
-get_ctx = GaIO $ lift ask
+show_help :: IO ()
+show_help = putStr long_usage
+
+mk_ctx :: IO GaCtx
+mk_ctx = GaCtx "/home/jfs" undefined
+               stdin stdout stderr
+               (Userid 0) (Username "root")
+               <$> (queryTerminal =<< handleToFd stdin)
+               <*> (queryTerminal =<< handleToFd stdout)
+               <*> (queryTerminal =<< handleToFd stderr)
 
 -- =====================================================================
 -- API
@@ -204,7 +202,6 @@ data GaCtx
 data GaAction a where
   GaSeq :: GaAction a -> (a -> GaAction b) -> GaAction b
   GaPure :: a -> GaAction a
-  GetCtx :: GaAction GaCtx
   ReadLineStdin :: GaAction String
   ToStderrIfTTY :: String -> GaAction ()
   LogStderr :: String -> GaAction ()
@@ -219,6 +216,7 @@ data GaAction a where
 data DbAction a where
   DbSeq :: DbAction a -> (a -> DbAction b) -> DbAction b
   DbPure :: a -> DbAction a
+  GetCtx :: DbAction GaCtx
   LogMesg :: String -> DbAction String
   AddSshkey :: Sshkey -> DbAction ()
   RemoveSshkey :: Sshkey -> DbAction ()
@@ -259,33 +257,14 @@ instance Monad DbAction where
   return = DbPure
 
 -- =====================================================================
--- GaIO is the execution context for programs in the GaCmd language
--- =====================================================================
-
-newtype GaIO a = GaIO { unGaIO :: EitherT GaErr (ReaderT GaCtx IO) a }
-
-run_gaio :: GaCtx -> GaIO a -> IO ()
-run_gaio ctx gaio = do
-  r <- runReaderT (runEitherT (unGaIO gaio)) ctx
-  case r of
-    Left a -> putStrLn $ "Error: " ++ show a
-    Right _ -> return ()
-
-instance Monad GaIO where
-  GaIO m >>= f = GaIO $ m >>= (unGaIO . f)
-  return = GaIO . return
-
-instance MonadIO GaIO where
-  liftIO = GaIO . EitherT . lift . fmap Right
-
--- =====================================================================
 -- compile GaCmd to GaAction
 -- =====================================================================
 
 compile :: GaCmd a -> GaAction a
 compile (CmdSeq m f)                 = compile m >>= compile . f
 compile (CmdPure a)                  = return a
-compile (CmdWhoami)                  = do Username name <- logname <$> GetCtx
+compile (CmdWhoami)                  = do let ctx = RunTransaction GetCtx
+                                          Username name <- logname <$> ctx
                                           PrintStdout name
                                           return (Username name)
 compile (CmdAddSshkey mb)            = do key <- get_sshkey mb
@@ -321,6 +300,29 @@ get_sshkey Nothing = patiently fromstdin where
                  (parse_sshkey . words) <$> ReadLineStdin
 
 -- =====================================================================
+-- GaIO is the execution context for programs in the GaAction language
+-- =====================================================================
+
+newtype GaIO a = GaIO { unGaIO :: EitherT GaErr (ReaderT GaCtx IO) a }
+
+get_ctx :: GaIO GaCtx
+get_ctx = GaIO $ lift ask
+
+run_gaio :: GaCtx -> GaIO a -> IO ()
+run_gaio ctx gaio = do
+  r <- runReaderT (runEitherT (unGaIO gaio)) ctx
+  case r of
+    Left a -> putStrLn $ "Error: " ++ show a
+    Right _ -> return ()
+
+instance Monad GaIO where
+  GaIO m >>= f = GaIO $ m >>= (unGaIO . f)
+  return = GaIO . return
+
+instance MonadIO GaIO where
+  liftIO = GaIO . EitherT . lift . fmap Right
+
+-- =====================================================================
 -- compile GaAction to GaIO
 -- =====================================================================
 
@@ -329,7 +331,6 @@ compileGaAction = go where
   go :: GaAction a -> GaIO a
   go (GaSeq m f)        = go m >>= (go . f)
   go (GaPure a)         = return a
-  go (GetCtx)           = get_ctx
   go (ReadLineStdin)    = liftIO $ getLine
   go (ToStderrIfTTY s)  = do x <- get_ctx
                              when (is_stderr_tty x)
@@ -346,8 +347,9 @@ compileGaAction = go where
 
 compileDbAction :: DbAction a -> GaIO a
 compileDbAction = go where
-  go (DbSeq m f) = compileDbAction m >>= (compileDbAction . f)
-  go (DbPure a)  = return a
+  go (DbSeq m f)     = compileDbAction m >>= (compileDbAction . f)
+  go (DbPure a)      = return a
+  go (GetCtx)        = get_ctx
   go (AddSshkey key) = liftIO $ error "addkey not implemented"
 
 -- =====================================================================
