@@ -8,6 +8,8 @@ import Control.Applicative (Applicative(..), (<$>), (<*>))
 import Control.Monad.Trans.Either (EitherT(..))
 import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class (MonadIO(..))
+import System.Exit (ExitCode(..))
+import System.IO (hPutStrLn, stderr)
 import Text.Regex.Posix ((=~))
 
 import Types
@@ -32,11 +34,11 @@ data GaCall
   | CallScript String
   | CallInteractive
 
-gitadmin :: Username -> GaCall -> IO ()
+gitadmin :: Username -> GaCall -> IO ExitCode
 gitadmin username call =
     case parse_cmd call of
-        Left msg -> putStrLn msg
-        Right cmd -> run_cmd username cmd
+        Left msg -> hPutStrLn stderr msg >> return (ExitFailure 2)
+        Right cmd -> run_cmd username cmd >> return ExitSuccess
 
 parse_cmd :: GaCall -> Either String (GaCmd ())
 parse_cmd call = case call of
@@ -46,11 +48,12 @@ parse_cmd call = case call of
 
 parse_cmd_array :: [String] -> Either String (GaCmd ())
 parse_cmd_array xs = go xs where
-    go ["whoami"] = Right $ CmdWhoami >> return ()
-    go ["addkey"] = Right $ CmdAddSshkey Nothing >> return ()
-    go ("addkey":rest) = parse_sshkey rest >>= \key ->
-                            (Right $ CmdAddSshkey (Just key) >> return ())
-    go _ = Left  $ "Failed to parse command line"
+    go ["whoami"]       = Right $ const () <$> CmdWhoami
+    go ["addkey"]       = Right $ const () <$> (CmdAddSshkey Nothing)
+    go ("addkey":rest)  = parse_sshkey rest >>= \key ->
+                               (Right $ const () <$> CmdAddSshkey (Just key))
+    go ["removekey"]    = Right $ const () <$> CmdRemoveSshkey Nothing
+    go _                = Left "Failed to parse command line"
 
 parse_script :: String -> Either String (GaCmd ())
 parse_script = undefined

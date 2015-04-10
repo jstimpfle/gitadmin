@@ -3,6 +3,8 @@
 import Control.Applicative ((<$>))
 import Control.Monad (guard)
 import System.Environment (getArgs)
+import System.Exit (ExitCode(..), exitWith)
+import System.IO (hPutStrLn, stderr)
 
 import Types (Username(..))
 import Help (show_help)
@@ -15,11 +17,14 @@ data RunConf
     | Call Username GaCall
 
 main :: IO ()
-main = parse_args <$> getArgs >>= \case
-    Left msg -> putStrLn msg
-    Right ShowHelp -> show_help
-    Right Initialize -> initialize
-    Right (Call username gacall) -> gitadmin username gacall
+main =
+ do runconf <- parse_args <$> getArgs
+    r <- case runconf of
+        Left msg -> hPutStrLn stderr msg >> return (ExitFailure 2)
+        Right ShowHelp -> show_help >> return ExitSuccess
+        Right Initialize -> initialize
+        Right (Call username gacall) -> gitadmin username gacall
+    exitWith r
 
 parse_args :: [String] -> Either String RunConf
 parse_args = \case

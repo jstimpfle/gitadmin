@@ -14,10 +14,12 @@ module Fs
   )
 where
 
-import Control.Applicative ((<$>))
+import Control.Applicative ((<$>), (<*>))
+import Control.Monad (join)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Either (EitherT(..), runEitherT)
-import System.Directory (createDirectory, renameDirectory, removeDirectory)
+import System.Directory (createDirectory, renameDirectory, removeDirectory, removeDirectoryRecursive, renameFile)
 import System.Exit (ExitCode(..))
 import System.FilePath (joinPath)
 import System.IO.Error (catchIOError)
@@ -28,19 +30,33 @@ import GaErr
 import GaIO
 import Types
 
+liftIO1 :: MonadIO m => (a -> IO b) -> a -> m b
+liftIO1 f a = liftIO (f a)
+
+liftIO2 :: MonadIO m => (a -> b -> IO c) -> a -> b -> m c
+liftIO2 f a b = liftIO (f a b)
+
 catch_ioerror :: IO a -> (IOError -> GaErr) -> GaIO a
 catch_ioerror m h = GaIO $ EitherT $ lift $
                 catchIOError (Right <$> m) (return . Left . h)
 
+basedir_path :: GaIO FilePath
+basedir_path = get_ctx >>= return . baseDir
+
 domain_path :: Domainname -> GaIO FilePath
 domain_path (Domainname domain) =
- do bd <- get_ctx >>= return . baseDir
+ do bd <- basedir_path
     return $ joinPath [bd, domain]
 
 repo_path :: Domainname -> Reponame -> GaIO FilePath
 repo_path domain (Reponame repo) =
  do dp <- domain_path domain
     return $ joinPath [dp, repo]
+
+authorizedkeys_path :: GaIO FilePath
+authorizedkeys_path =
+ do bd <- basedir_path
+    return $ joinPath [bd, "authorized_keys"]
 
 create_dir :: FilePath -> GaIO ()
 create_dir fp = catch_ioerror m h where
@@ -98,22 +114,35 @@ delete_domain_dir d =
     delete_dir dp1
 
 fs_update_authorizedkeysfile :: [Sshkey] -> GaIO ()
-fs_update_authorizedkeysfile = undefined
+fs_update_authorizedkeysfile keys =
+ do Username username <- logname <$> get_ctx
+    filename <- authorizedkeys_path
+    let tmpfilename = filename ++ ".tmp"
+        contents = unlines $ map (authorized_keys_line username) keys
+    liftIO $ writeFile tmpfilename contents
+    liftIO $ renameFile tmpfilename filename
+ where
+    authorized_keys_line username(Sshkey (SshkeyAlgo algo) (SshkeyKey key) (SshkeyComment comment)) =
+        "command=\"gitadmin -u " ++ username ++ "\" " ++ unwords [algo, key, comment]
 
 fs_create_domain :: Domainname -> Domaincomment -> GaIO ()
-fs_create_domain = undefined
+fs_create_domain domainname _ = join $ liftIO1 createDirectory <$> domain_path domainname
 
 fs_rename_domain :: Domainname -> Domainname -> Domaincomment -> GaIO ()
-fs_rename_domain = undefined
+fs_rename_domain d d' c' = join $ liftIO2 renameDirectory
+                                                    <$> domain_path d
+                                                    <*> domain_path d'
 
 fs_delete_domain :: Domainname -> GaIO ()
-fs_delete_domain = undefined
+fs_delete_domain domainname = liftIO1 removeDirectory =<< domain_path domainname
 
 fs_create_repo :: Domainname -> Reponame -> Repocomment -> GaIO ()
 fs_create_repo = undefined
 
 fs_rename_repo :: Domainname -> Reponame -> Domainname -> Reponame -> Repocomment -> GaIO ()
-fs_rename_repo = undefined
+fs_rename_repo d r d' r' c' = join $ liftIO2 renameDirectory
+                                                    <$> domain_path d
+                                                    <*> domain_path d'
 
 fs_delete_repo :: Domainname -> Reponame -> GaIO ()
-fs_delete_repo = undefined
+fs_delete_repo d r = join $ liftIO1 removeDirectoryRecursive <$> repo_path d r

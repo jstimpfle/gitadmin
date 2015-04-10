@@ -7,8 +7,8 @@ import Control.Applicative (Applicative, pure, (<*>))
 import GaCtx
 import GaIO
 import Types
-import qualified FsAction as Fs
 import Db
+import qualified FsAction as Fs
 
 data DbAction a where
     DbActionPure :: a -> DbAction a
@@ -21,13 +21,13 @@ data DbAction a where
     LsUsers      :: DbAction [User]
     LsRepos      :: Domainname -> DbAction [Repo]
     CreateDomain :: Domainname -> Domaincomment -> DbAction ()
-    RenameDomain :: Domainname -> Domainname -> Domaincomment -> DbAction ()
+    RenameDomain :: Domainname -> Domainname -> Domaincomment -> DbAction Bool
     DeleteDomain :: Domainname -> DbAction ()
     CreateUser   :: Username -> Usercomment -> DbAction ()
-    RenameUser   :: Username -> Username -> Usercomment -> DbAction ()
+    RenameUser   :: Username -> Username -> Usercomment -> DbAction Bool
     DeleteUser   :: Username -> DbAction ()
     CreateRepo   :: Domainname -> Reponame -> Repocomment -> DbAction ()
-    RenameRepo   :: Domainname -> Reponame -> Domainname -> Reponame -> Repocomment -> DbAction ()
+    RenameRepo   :: Domainname -> Reponame -> Domainname -> Reponame -> Repocomment -> DbAction Bool
     DeleteRepo   :: Domainname -> Reponame -> DbAction ()
     GrantAdmin   :: Domainname -> Username -> DbAction Bool
     RevokeAdmin  :: Domainname -> Username -> DbAction Bool

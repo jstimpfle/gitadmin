@@ -25,13 +25,13 @@ data GaTransaction a where
   LsUsers      :: GaTransaction [User]
   LsRepos      :: Domainname -> GaTransaction [Repo]
   CreateDomain :: Domainname -> Domaincomment -> GaTransaction ()
-  RenameDomain :: Domainname -> Domainname -> Domaincomment -> GaTransaction ()
+  RenameDomain :: Domainname -> Domainname -> Domaincomment -> GaTransaction Bool
   DeleteDomain :: Domainname -> GaTransaction ()
   CreateUser   :: Username -> Usercomment -> GaTransaction ()
-  RenameUser   :: Username -> Username -> Usercomment -> GaTransaction ()
+  RenameUser   :: Username -> Username -> Usercomment -> GaTransaction Bool
   DeleteUser   :: Username -> GaTransaction ()
   CreateRepo   :: Domainname -> Reponame -> Repocomment -> GaTransaction ()
-  RenameRepo   :: Domainname -> Reponame -> Domainname -> Reponame -> Repocomment -> GaTransaction ()
+  RenameRepo   :: Domainname -> Reponame -> Domainname -> Reponame -> Repocomment -> GaTransaction Bool
   DeleteRepo   :: Domainname -> Reponame -> GaTransaction ()
   GrantAdmin   :: Domainname -> Username -> GaTransaction Bool
   RevokeAdmin  :: Domainname -> Username -> GaTransaction Bool
@@ -64,8 +64,9 @@ compileGaTransaction = go where
   go (LsRepos d)               = Db.LsRepos d
   go (CreateDomain d c)        = Db.CreateDomain d c
                                  >> Db.FsAction (Fs.CreateDomain d c)
-  go (RenameDomain d d' c')    = Db.RenameDomain d d' c'
-                                 >> Db.FsAction (Fs.RenameDomain d d' c')
+  go (RenameDomain d d' c')    = do b <- Db.RenameDomain d d' c'
+                                    Db.FsAction (Fs.RenameDomain d d' c')
+                                    return b
   go (DeleteDomain d)          = Db.DeleteDomain d
                                  >> Db.FsAction (Fs.DeleteDomain d)
   go (CreateUser u c)          = Db.CreateUser u c
@@ -73,8 +74,9 @@ compileGaTransaction = go where
   go (DeleteUser u)            = Db.DeleteUser u
   go (CreateRepo d r c)        = Db.CreateRepo d r c
                                  >> Db.FsAction (Fs.CreateRepo d r c)
-  go (RenameRepo d r d' r' c') = Db.RenameRepo d r d' r' c'
-                                 >> Db.FsAction (Fs.RenameRepo d r d' r' c')
+  go (RenameRepo d r d' r' c') = do b <- Db.RenameRepo d r d' r' c'
+                                    Db.FsAction (Fs.RenameRepo d r d' r' c')
+                                    return b
   go (DeleteRepo d r)          = Db.DeleteRepo d r
                                  >> Db.FsAction (Fs.DeleteRepo d r)
   go (GrantAdmin d u)          = Db.GrantAdmin d u

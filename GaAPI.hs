@@ -1,29 +1,21 @@
-{-# LANGUAGE GADTs #-}
-
 module GaAPI where
 
 import Control.Applicative ((<$>), (<*>))
 import System.IO (stdin, stdout, stderr)
-import System.Posix.IO (handleToFd)
 import System.Posix.Terminal (queryTerminal)
 
-import Sshkey
 import Types
-import GaErr
-import GaCtx
 import GaCmd
-import GaAction
+import GaCtx
 import GaIO
-
-mk_ctx :: Username -> IO GaCtx
-mk_ctx username = GaCtx "/home/jfs" undefined
-                   stdin stdout stderr
-                   (Userid 0) (Username "root")
-                   <$> (queryTerminal =<< handleToFd stdin)
-                   <*> (queryTerminal =<< handleToFd stdout)
-                   <*> (queryTerminal =<< handleToFd stderr)
+import GaAction
+import Db
 
 run_cmd :: Username -> GaCmd () -> IO ()
 run_cmd username cmd =
- do ctx <- mk_ctx username
+ do conn <- db_connect "gitadmin-basedir/db.sqlite3"
+    ctx <- GaCtx "gitadmin-basedir" conn stdin stdout stderr
+                    (Userid 0) (Username "root")
+                    <$> queryTerminal 0 <*> queryTerminal 1 <*> queryTerminal 2
     run_gaio ctx $ compileGaAction $ compile cmd
+    db_disconnect conn

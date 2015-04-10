@@ -22,17 +22,20 @@ data GaCmd a where
     CmdLsUsers :: GaCmd [User]
     CmdLsRepos :: Domainname -> GaCmd [Repo]
     CmdCreateUser :: Username -> Usercomment -> GaCmd ()
-    CmdRenameUser :: Username -> Username -> Usercomment -> GaCmd ()
+    CmdRenameUser :: Username -> Username -> Usercomment -> GaCmd Bool
     CmdDeleteUser :: Username -> GaCmd ()
     CmdCreateDomain :: Domainname -> Domaincomment -> GaCmd ()
-    CmdRenameDomain :: Domainname -> Domainname -> Domaincomment -> GaCmd ()
+    CmdRenameDomain :: Domainname -> Domainname -> Domaincomment -> GaCmd Bool
     CmdDeleteDomain :: Domainname -> GaCmd ()
     CmdCreateRepo :: Domainname -> Reponame -> Repocomment -> GaCmd ()
-    CmdRenameRepo :: Domainname -> Reponame -> Domainname -> Reponame -> Repocomment -> GaCmd ()
+    CmdRenameRepo :: Domainname -> Reponame -> Domainname -> Reponame -> Repocomment -> GaCmd Bool
     CmdDeleteRepo :: Domainname -> Reponame -> GaCmd ()
     CmdGrantAdmin :: Domainname -> Username -> GaCmd Bool
     CmdRevokeAdmin :: Domainname -> Username -> GaCmd Bool
     CmdSetPerm :: Domainname -> Reponame -> Username -> Perm -> GaCmd ()
+
+instance Functor GaCmd where
+    fmap f = (>>= return . f)
 
 instance Monad GaCmd where
     (>>=) = CmdSeq
