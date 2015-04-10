@@ -18,7 +18,7 @@ gitadmin invocation:
 
     gitadmin --help
     gitadmin --init
-    gitadmin ARGS...
+    gitadmin [-u USER] ARGS...
     gitadmin [-u USER]
     gitadmin [-u USER] -c COMMAND
     SSH_ORIGINAL_CMD=GITCMD gitadmin [-u USER]
@@ -1057,7 +1057,7 @@ def gitadmin(argv, ssh_original_command):
     if len(argv):
         wrong_usage()
     exclusive(wantinit, wanthelp, cmd_array, cmd_string)
-    exclusive(wantinit, wanthelp, cmd_array, req_user)
+    exclusive(wantinit, wanthelp, req_user)
 
     if wanthelp is not None:
         process_help_request()
