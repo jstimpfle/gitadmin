@@ -13,7 +13,7 @@ config = {
   'authorized_keys': os.path.join(os.getenv('HOME'), '.ssh/authorized_keys')
 }
 
-short_usage = r"""\
+short_usage = r"""
 gitadmin invocation:
 
     gitadmin --help
@@ -24,8 +24,7 @@ gitadmin invocation:
     SSH_ORIGINAL_CMD=GITCMD gitadmin [-u USER]
 """
 
-long_usage = short_usage + r"""\
-
+long_usage = short_usage + r"""
 Valid gitadmin COMMANDs can be listed with "gitadmin info"
 
 In the first case, print this help message.
@@ -59,7 +58,7 @@ allowed git request (git-receive-pack 'DOMAIN/REPO' or git-uploadpack
 'DOMAIN/REPO') and execute it.
 """
 
-shell_intro = r"""\
+shell_intro = r"""
 Welcome to gitadmin.
 
 Type 'info' for a list of available commands
@@ -67,7 +66,7 @@ Type 'info' for a list of available commands
 
 shell_prompt = 'gitadmin> '
 
-shell_usage = r"""\
+shell_usage = r"""
 Root admin commands:
 
    users
@@ -92,8 +91,7 @@ Domain admin commands:                       User commands:
 
 """
 
-authorized_keys_header = r"""\
-#
+authorized_keys_header = r"""#
 # THIS FILE IS MANAGED BY GITADMIN
 #
 """
