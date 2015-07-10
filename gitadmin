@@ -77,18 +77,19 @@ Root admin commands:
    create_user USER COMMENT
    delete_user USER
 
-Domain admin commands:
+Domain admin commands:                       User commands:
 
-  admins DOMAIN
-  repos DOMAIN                              User commands:
-  repo_perms DOMAIN REPO
-  set_domain_admin DOMAIN USER                info
-  unset_domain_admin DOMAIN USER              whoami
-  create_repo DOMAIN REPO COMMENT             domains
-  delete_repo DOMAIN REPO                     perms
-  set_repo_comment DOMAIN REPO COMMENT        sshkeys
-  set_perm DOMAIN REPO USER <none|R|RW>       add_sshkey
-  set_public DOMAIN REPO <true|false>         remove_sshkey
+  admins DOMAIN                                info
+  repos DOMAIN                                 whoami
+  repo_perms DOMAIN REPO                       domains
+  set_domain_admin DOMAIN USER                 perms
+  unset_domain_admin DOMAIN USER               sshkeys
+  create_repo DOMAIN REPO COMMENT              add_sshkey
+  delete_repo DOMAIN REPO                      remove_sshkey
+  set_repo_comment DOMAIN REPO COMMENT         create_guest USER COMMENT
+  set_perm DOMAIN REPO USER <none|R|RW>        delete_guest USER
+  set_public DOMAIN REPO <true|false>          guests
+
 """
 
 authorized_keys_header = r"""\
@@ -108,6 +109,7 @@ CREATE TABLE domain
 
 CREATE TABLE user
 ( id INTEGER PRIMARY KEY
+, host INTEGER
 , name VARCHAR NOT NULL
 , comment VARCHAR NOT NULL
 --
@@ -164,7 +166,7 @@ INSERT INTO user (id, name, comment) VALUES (0, "root", "");
 """
 
 domainname_regex = r"""[abcdefghijklmnopqrstuvwxyz]{2,16}"""
-username_regex   = r"""[abcdefghijklmnopqrstuvwxyz0123456789]{2,16}"""
+username_regex   = r"""(guest-)?[abcdefghijklmnopqrstuvwxyz0123456789]{2,16}"""
 reponame_regex   = r"""[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]{2,32}"""
 domaincomment_regex = r"""[]abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
 usercomment_regex   = r"""[]abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !"#$%&'()*+../:;<=>@?[\^_`{|}~-]{0,255}"""
@@ -342,6 +344,12 @@ def set_repo_comment_git(domain, repo, comment):
     path = repo_comment_filepath(domain, repo)
     open(path, "w").write(comment)
 
+def delete_user_db(uid):
+    conn.execute("DELETE FROM sshkey WHERE userid = ?", (uid,))
+    conn.execute("DELETE FROM admin WHERE userid = ?", (uid,))
+    conn.execute("DELETE FROM permissions WHERE userid = ?", (uid,))
+    conn.execute("DELETE FROM user WHERE id = ?", (uid,))
+
 def create_publicro_domain_dir(domain):
     dirpath = publicro_domain_dirpath(domain)
     os.mkdir(dirpath)
@@ -378,6 +386,12 @@ def need_valid_domaincomment(x):
 def need_valid_username(x):
     if not exact_match(username_regex, x):
         raise InvalidArgument("'{}' is not a valid user name".format(x))
+
+def need_valid_guestname(x):
+    need_valid_username(x)
+    if not x.startswith('guest-'):
+        raise InvalidArgument("'{}' ist not a valid guest user name:"
+                              " must have \"guest-\" prefix".format(x))
 
 def need_valid_usercomment(x):
     if not exact_match(usercomment_regex, x):
@@ -428,6 +442,30 @@ def need_user_id(user):
     if not rs:
         raise GAError("user does not exist: {}".format(user))
     return rs[0][0]
+
+def need_native_user(user):
+    rs = conn.execute("SELECT 1 FROM user WHERE name = ? and host IS NULL",
+                      (user,))
+    rs = list(rs)
+    if not rs:
+        raise GAError("User {} is a guest user".format(user))
+
+def need_guest_user(user):
+    rs = conn.execute("SELECT 1 FROM user WHERE name = ? and host IS NOT NULL",
+                      (user,))
+    rs = list(rs)
+    if not rs:
+        raise GAError("User {} is not a guest user".format(user))
+
+def need_is_host_of(host, guest):
+    hostuid = need_user_id(host)
+    guestuid = need_user_id(guest)
+    rs = conn.execute("SELECT 1 FROM user WHERE id = ? and host = ?",
+                      (guestuid, hostuid))
+    rs = list(rs)
+    if not rs:
+        raise GAError("User {} is not host of {}".format(host, guest))
+
 
 def need_repo_id(domain, repo):
     need_valid_reponame(repo)
@@ -480,6 +518,22 @@ def warn_unadministered_domains():
                          ORDER BY D.name""")
     for r in rs:
         print("WARNING: Domain has no admin: {}".format(r[0]), file=sys.stderr)
+
+def read_sshkey():
+    if is_interactive:
+        print("Please give the key which you want added on one line",
+              file=sys.stderr)
+    line = sys.stdin.readline()
+    return need_valid_sshkey(line)
+
+def write_sshkey(uid, algo, key, comment):
+    try:
+        conn.execute("""INSERT INTO sshkey (userid, algo, key, comment)
+                        VALUES (?, ?, ?, ?)""", (uid, algo, key, comment))
+    except sqlite3.IntegrityError as e:
+        raise GAError("This key is already in the database")  # or user deleted
+    else:
+        update_ssh_authorized_keys()
 
 def split_cmdline(cmdline):
     cmd = []
@@ -661,18 +715,8 @@ def sshkeys():
 def add_sshkey():
     if is_root:
         raise GAError("You are the root admin; refusing to add an SSH key")
-    if is_interactive:
-        print("Please give the key which you want added on one line",
-              file=sys.stderr)
-    line = sys.stdin.readline()
-    algo, key, comment = need_valid_sshkey(line)
-    try:
-        conn.execute("""INSERT INTO sshkey (userid, algo, key, comment)
-                        VALUES (?, ?, ?, ?)""", (loguid, algo, key, comment))
-    except sqlite3.IntegrityError as e:
-        raise GAError("This key is already in the database")  # or user deleted
-    else:
-        update_ssh_authorized_keys()
+    algo, key, comment = read_sshkey()
+    write_sshkey(loguid, algo, key, comment)
 
 @usercmd
 def remove_sshkey():
@@ -689,6 +733,40 @@ def remove_sshkey():
         update_ssh_authorized_keys()
     else:
         print("WARNING: Key not found", file=sys.stderr)
+
+@usercmd
+def create_guest(guest, comment):
+    need_native_user(loguser)
+    host = loguid
+    need_valid_guestname(guest)
+    need_valid_usercomment(comment)
+    if is_interactive:
+        print("You need to provide an initial public key for your guest",
+              file=sys.stderr)
+    algo, key, keycomment = read_sshkey()
+    try:
+        conn.execute("""INSERT INTO user (host, name, comment)
+                        VALUES (?, ?, ?)""", (host, guest, comment))
+    except sqlite3.IntegrityError:
+        raise GAError("User exists: {}".format(guest))
+    uid = need_user_id(guest)
+    write_sshkey(uid, algo, key, keycomment)
+
+@usercmd
+def delete_guest(guest):
+    need_native_user(loguser)
+    need_valid_guestname(guest)
+    need_is_host_of(loguser, guest)
+    uid = need_user_id(guest)
+    delete_user_db(uid)
+    warn_unadministered_domains()
+    update_ssh_authorized_keys()
+
+@usercmd
+def guests():
+    rs = conn.execute("SELECT name, comment FROM user WHERE host = ?",
+                      (loguid,))
+    print_table(rs)
 
 @domaincmd
 def admins(domain):
@@ -861,14 +939,11 @@ def create_user(user, comment):
 
 @rootcmd
 def delete_user(user):
-    userid = need_user_id(user)
     if (user == "root"):
         print("WARNING: Refusing to delete root user", file=sys.stderr)
         return
-    conn.execute("DELETE FROM sshkey WHERE userid = ?", (userid,))
-    conn.execute("DELETE FROM admin WHERE userid = ?", (userid,))
-    conn.execute("DELETE FROM permissions WHERE userid = ?", (userid,))
-    conn.execute("DELETE FROM user WHERE id = ?", (userid,))
+    uid = need_user_id(user)
+    delete_user_db(uid)
     warn_unadministered_domains()
     update_ssh_authorized_keys()
 
