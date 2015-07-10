@@ -585,8 +585,12 @@ def format_table(rs):
     def lalign(s, n):
         return s + (" " * (n - len(s)))
     for r in rs:
-        fmtr = [lalign(str(c), l) for c, l in zip(r, collens)]
-        out.append('\t'.join(fmtr))
+        cs = []
+        for c, l in list(zip(r, collens))[:-1]:
+            cs.append(lalign(str(c), l))
+        for c in r[-1:]:
+            cs.append(str(c))
+        out.append('\t'.join(cs))
     return out
 
 def print_table(rs):
