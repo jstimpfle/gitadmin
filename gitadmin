@@ -747,6 +747,8 @@ def delete_repo(domain, repo):
 @domaincmd
 def set_repo_comment(domain, repo, comment):
     repoid = need_repo_id(domain, repo)
+    need_valid_repocomment(comment)
+    conn.execute("UPDATE repo SET comment = ? WHERE id = ?", (comment, repoid))
     set_repo_comment_git(domain, repo, comment)
 
 @domaincmd
