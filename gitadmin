@@ -69,7 +69,6 @@ shell_prompt = 'gitadmin> '
 shell_usage = r"""
 Root admin commands:
 
-   users
    su USER CMD...
    create_domain DOMAIN COMMENT
    delete_domain DOMAIN
@@ -80,15 +79,15 @@ Domain admin commands:                       User commands:
 
   admins DOMAIN                                info
   repos DOMAIN                                 whoami
-  repo_perms DOMAIN REPO                       domains
-  set_domain_admin DOMAIN USER                 perms
-  unset_domain_admin DOMAIN USER               sshkeys
-  create_repo DOMAIN REPO COMMENT              add_sshkey
-  delete_repo DOMAIN REPO                      remove_sshkey
-  set_repo_comment DOMAIN REPO COMMENT         create_guest USER COMMENT
-  set_perm DOMAIN REPO USER <none|R|RW>        delete_guest USER
-  set_public DOMAIN REPO <true|false>          guests
-
+  repo_perms DOMAIN REPO                       users
+  set_domain_admin DOMAIN USER                 domains
+  unset_domain_admin DOMAIN USER               perms
+  create_repo DOMAIN REPO COMMENT              sshkeys
+  delete_repo DOMAIN REPO                      add_sshkey
+  set_repo_comment DOMAIN REPO COMMENT         remove_sshkey
+  set_perm DOMAIN REPO USER <none|R|RW>        guests
+  set_public DOMAIN REPO <true|false>          create_guest USER COMMENT
+                                               delete_guest USER
 """
 
 authorized_keys_header = r"""#
@@ -683,6 +682,12 @@ def whoami():
     print(loguser)
 
 @usercmd
+def users():
+    rs = conn.execute("""SELECT U.name, U.comment FROM user U
+                         WHERE U.name <> "root" """)
+    print_table(rs)
+
+@usercmd
 def domains():
     if is_root:
         rs = conn.execute("""SELECT D.name, D.comment FROM domain D
@@ -879,12 +884,6 @@ def set_public(domain, repo, boolean):
     rs = list(rs)
     if rs[0][0] != 0:
         update_publicro_symlink(domain, repo, publish)
-
-@rootcmd
-def users():
-    rs = conn.execute("""SELECT U.name, U.comment FROM user U
-                         WHERE U.name <> "root" """)
-    print_table(rs)
 
 @sucmd
 def su(user, *args):
