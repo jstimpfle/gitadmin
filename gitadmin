@@ -163,7 +163,7 @@ CREATE TABLE publicro
 INSERT INTO user (id, name, comment) VALUES (0, "root", "");
 """
 
-domainname_regex = r"""[abcdefghijklmnopqrstuvwxyz]{2,16}"""
+domainname_regex = r"""[abcdefghijklmnopqrstuvwxyz-]{2,16}"""
 username_regex   = r"""(guest-)?[abcdefghijklmnopqrstuvwxyz0123456789]{2,16}"""
 reponame_regex   = r"""[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]{2,32}"""
 domaincomment_regex = r"""[]abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
