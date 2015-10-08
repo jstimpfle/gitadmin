@@ -9,8 +9,7 @@ import subprocess
 import sys
 
 config = {
-  'basedir': os.path.join(os.getenv('HOME'), 'basedir'),
-  'authorized_keys': os.path.join(os.getenv('HOME'), '.ssh/authorized_keys')
+  'basedir': 'gitadmin-basedir'
 }
 
 short_usage = r"""
@@ -19,43 +18,58 @@ gitadmin invocation:
     gitadmin --help
     gitadmin --init
     gitadmin [-u USER] ARGS...
-    gitadmin [-u USER]
     gitadmin [-u USER] -c COMMAND
+    gitadmin [-u USER]
     SSH_ORIGINAL_CMD=GITCMD gitadmin [-u USER]
 """
 
 long_usage = short_usage + r"""
-Valid gitadmin COMMANDs can be listed with "gitadmin info"
-
 In the first case, print this help message.
 
 In the second case, initialize a new gitadmin environment. gitadmin will abort
-if an existing environment is found.
+if an existing environment is found. The base directory 'gitadmin-basedir' (or
+whatever was configured by changing the program code) must exist, and be empty.
+Filepath customization is currently done after initialization by moving the
+objects which were created in the base directory somewhere else, and putting
+symlinks into the base directory.
 
-In the third case, the argument list is interpreted as a single gitadmin
-command. The arguments must form a pre-split valid gitadmin command. For
-example, a valid gitadmin invocation from sh would be
+In the third case, the argument list is interpreted as a single gitadmin command
+(possible commands are listed by the "info" command). If -u USER is given,
+interpret the command as this gitadmin user. The arguments must form a pre-split
+valid gitadmin command. For example, a valid invocation from the shell (sh)
+would be
 
     $ gitadmin create_user john "John Doe"
 
-In the fourth case, run the gitadmin shell interpreter reading commands from
-stdin. The shell is run in interactive mode if all standard streams are
-connected to a tty, and otherwise in noninteractive mode. If -u USER is given,
-run the shell as this gitadmin user. Commands are read line by line, and split
-into words with a simple algorithm involving " as quote character and \ as
-escape character, similar to the sh quoting algorithm. Example: This\ is" all
-one "word. Example gitadmin command line:
-
-    create_repo john testrepo "John's testrepo in the \"john\" domain"
-
-In the fifth case, run the gitadmin shell in noninteractive mode over COMMAND
-which must be a single argument. Example gitadmin invocation from sh:
+In the fourth case, run the gitadmin shell in noninteractive mode, interpreting
+COMMAND which must be a single argument. The gitadmin shell syntax is explained
+a little better in the next paragraph. If -u USER is given, run as the given
+gitadmin user. Example gitadmin invocation from sh:
 
     $ gitadmin -u john -c 'set_perm john testrepo jane RW'
 
+In the fifth case, run the gitadmin shell, interpreting commands read from
+stdin. The shell is run in interactive mode if all standard streams are
+connected to a tty, and otherwise in noninteractive mode. If -u USER is given,
+run the shell as this gitadmin user. Commands are read line by line, and split
+into words with a simple algorithm involving quotation mark (") as quote
+character and backslash (\) as escape character, similar to the quoting
+algorithm known from sh. Example: This\ is" all one "word. Example gitadmin
+commands:
+
+    gitadmin> create_repo john testrepo "John's testrepo, in domain \"john\""
+    gitadmin> set_perm john testrepo john RW
+    gitadmin> set_perm john testrepo jane R
+
+(The "gitadmin> " prefixes are printed by gitadmin in interactive mode, to
+indicate that it is waiting for the next command).
+
 In the sixth case, validate the environment variable SSH_ORIGINAL_CMD as an
-allowed git request (git-receive-pack 'DOMAIN/REPO' or git-uploadpack
-'DOMAIN/REPO') and execute it.
+allowed git request (git-receive-pack 'DOMAIN/REPO' or git-upload-pack
+'DOMAIN/REPO', as can be observed with the git reference implementation) and
+execute it. This allows the actual git traffic, like pushes and pulls.  The idea
+is that the system administrator sets up a "gitadmin" system user, and places
+the authorized_keys file into ~gitadmin/.ssh/.
 """
 
 shell_intro = r"""
@@ -106,7 +120,7 @@ CREATE TABLE domain
 
 CREATE TABLE user
 ( id INTEGER PRIMARY KEY
-, host INTEGER
+, host INTEGER REFERENCES user(id)
 , name VARCHAR NOT NULL
 , comment VARCHAR NOT NULL
 --
@@ -216,7 +230,7 @@ class GitAdminShell(cmd.Cmd):
         pass
 
     def default(self, line):
-        if line == 'EOF':
+        if line in ['EOF','exit','quit']:
             print()
             sys.exit(0)
         else:
@@ -243,7 +257,8 @@ def basedir_filepath():
     return config['basedir']
 
 def authorized_keys_filepath():
-    return config['authorized_keys']
+    base = basedir_filepath()
+    return os.path.join(base, 'authorized_keys')
 
 def database_filepath():
     base = basedir_filepath()
@@ -299,19 +314,16 @@ def create_database():
     c.executescript(sqlschema)
     c.close()
 
-def create_authorized_keys():
-    path = authorized_keys_filepath()
-    f = open(path, 'w')
-    f.write(authorized_keys_header)
-    f.close()
-
-def replace_ssh_authorized_keys(contents):
+def write_authorized_keys(contents):
     fpath = authorized_keys_filepath()
     tmp = fpath + ".tmp"
-    f = open(tmp, 'w')
-    f.write(authorized_keys_header + contents)
-    f.close()
+    with open(tmp, 'w', encoding='ascii') as f:
+        f.write(authorized_keys_header)
+        f.write(contents)
     os.rename(tmp, fpath)
+
+def create_authorized_keys():
+    write_authorized_keys('')
 
 def create_repos_dir():
     dirpath = repos_dirpath()
@@ -339,7 +351,8 @@ def delete_repo_git(domain, reponame):
 
 def set_repo_comment_git(domain, repo, comment):
     path = repo_comment_filepath(domain, repo)
-    open(path, "w").write(comment)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(comment)
 
 def delete_user_db(uid):
     conn.execute("DELETE FROM sshkey WHERE userid = ?", (uid,))
@@ -571,7 +584,7 @@ def format_authorized_keys_line(user, algo, key, comment):
 
 def format_authorized_keys(rs):
     lines = [format_authorized_keys_line(*r) for r in rs]
-    return authorized_keys_header + ''.join(lines)
+    return ''.join(lines)
 
 def format_table(rs):
     """Formats a list of lists of things nicely for the user
@@ -605,7 +618,7 @@ def update_ssh_authorized_keys():
     rs = conn.execute("""SELECT U.name, S.algo, S.key, S.comment
                          FROM user U JOIN sshkey S ON U.id = S.userid""")
     cts = format_authorized_keys(rs)
-    replace_ssh_authorized_keys(cts)
+    write_authorized_keys(cts)
 
 def transaction(cmd):
     def func(*args, **kwargs):
@@ -1002,6 +1015,7 @@ def exec_git_cmdline(ssh_original_command):
        git_upload_pack(domain, repo)
 
 def initialize_gitadmin_environment():
+    # some best-effort sanity checks before writing to the filesystem...
     basedir_exists = os.path.isdir(basedir_filepath())
     basedir_empty = not basedir_exists or not os.listdir(basedir_filepath())
     database_exists = os.path.isfile(database_filepath())
