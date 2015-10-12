@@ -548,6 +548,7 @@ def write_sshkey(uid, algo, key, comment):
         update_ssh_authorized_keys()
 
 def split_cmdline(cmdline):
+    cmdline = cmdline.strip()
     cmd = []
     word = ""
     started = False
@@ -563,8 +564,7 @@ def split_cmdline(cmdline):
         elif char == '"':
             quoted = not quoted
             started = True
-        # XXX: .isspace() supports locales. Good thing?
-        elif char.isspace() and not quoted:
+        elif char in [' ','\t'] and not quoted:
             if started:
                 cmd.append(word)
             word = ""
