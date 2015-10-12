@@ -42,9 +42,9 @@ would be
     $ gitadmin create_user john "John Doe"
 
 In the fourth case, run the gitadmin shell in noninteractive mode, interpreting
-COMMAND which must be a single argument. The gitadmin shell syntax is explained
-a little better in the next paragraph. If -u USER is given, run as the given
-gitadmin user. Example gitadmin invocation from sh:
+COMMAND which must be a gitadmin shell command (a single argument). The gitadmin
+shell syntax is explained a little in the next paragraph. If -u USER is given,
+run as the given gitadmin user. Example gitadmin invocation from sh:
 
     $ gitadmin -u john -c 'set_perm john testrepo jane RW'
 
@@ -61,15 +61,17 @@ commands:
     gitadmin> set_perm john testrepo john RW
     gitadmin> set_perm john testrepo jane R
 
-(The "gitadmin> " prefixes are printed by gitadmin in interactive mode, to
+(The "gitadmin> " prompts are printed by gitadmin in interactive mode, to
 indicate that it is waiting for the next command).
 
 In the sixth case, validate the environment variable SSH_ORIGINAL_CMD as an
 allowed git request (git-receive-pack 'DOMAIN/REPO' or git-upload-pack
 'DOMAIN/REPO', as can be observed with the git reference implementation) and
-execute it. This allows the actual git traffic, like pushes and pulls.  The idea
-is that the system administrator sets up a "gitadmin" system user, and places
-the authorized_keys file into ~gitadmin/.ssh/.
+execute it as a subprocess, if the requesting user has appropriate permission.
+This allows the actual git traffic, like pushes and pulls.
+The idea is that the system administrator sets up a "gitadmin" system user, and
+configures the "authorized_keys" file which is maintained by gitadmin as the
+SshAuthorizedKeysFile for that system user.
 """
 
 shell_intro = r"""
