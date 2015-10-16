@@ -295,17 +295,9 @@ def init_basedir():
     # some best-effort sanity checks before writing to the filesystem...
     basedir_exists = os.path.isdir(basedir_filepath())
     basedir_empty = not basedir_exists or not os.listdir(basedir_filepath())
-    database_exists = os.path.isfile(database_filepath())
-    authorized_keys_exists = os.path.isfile(authorized_keys_filepath())
     if not basedir_exists or not basedir_empty:
         raise GAError('The basedir {} does not exist or is not empty. '
                       'Refusing to initialize'.format(basedir_filepath()))
-    if authorized_keys_exists:
-        raise GAError('authorized_keys file {} exists. Refusing to initialize'
-                      .format(authorized_keys_filepath()))
-    if database_exists:
-        raise GAError('Database {} exists. Refusing to initialize.'
-                      .format(database_filepath()))
     create_repos_dir()
     create_publicro_dir()
     create_authorized_keys()
