@@ -624,7 +624,7 @@ def split_cmdline(cmdline):
 
 def print_table(rs):
     rs = list(rs)
-    if is_interactive:
+    if is_stdout_tty:
         for r in format_table(rs):
             print(r)
     else:
