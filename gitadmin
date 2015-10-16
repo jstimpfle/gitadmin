@@ -348,19 +348,20 @@ def disconnect_database():
     conn.close()
     conn = None
 
-def update_publicro_symlink(domain, repo, publish):
+def set_publicro_symlink(domain, repo):
     dirpath = repo_dirpath(domain, repo)
     linkpath = publicro_repo_dirpath(domain, repo)
-    if publish:
-        try:
-            os.symlink(dirpath, linkpath)
-        except OSError as e:
-            raise GAError('Failed to create symlink: {}'.format(e))
-    else:
-        try:
-            os.unlink(linkpath)
-        except OSError as e:
-            raise GAError('Failed to remove symlink: {}'.format(e))
+    try:
+        os.symlink(dirpath, linkpath)
+    except OSError as e:
+        raise GAError('Failed to create symlink: {}'.format(e))
+
+def clear_publicro_symlink(domain, repo):
+    linkpath = publicro_repo_dirpath(domain, repo)
+    try:
+        os.unlink(linkpath)
+    except OSError as e:
+        raise GAError('Failed to remove symlink: {}'.format(e))
 
 def write_authorized_keys(contents):
     fpath = authorized_keys_filepath()
@@ -934,7 +935,10 @@ def set_public(domain, repo, boolean):
     rs = conn.execute("SELECT changes()")
     rs = list(rs)
     if rs[0][0] != 0:
-        update_publicro_symlink(domain, repo, publish)
+        if publish:
+            set_publicro_symlink(domain, repo)
+        else:
+            clear_publicro_symlink(domain, repo)
 
 @sucmd
 def su(user, *args):
