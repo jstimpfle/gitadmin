@@ -473,7 +473,7 @@ def need_is_native_user(user):
                       (user,))
     rs = list(rs)
     if not rs:
-        raise GAError("User {} is a guest user".format(user))
+        raise Unauthorized("User {} is a guest user".format(user))
 
 def need_is_host_of(host, guest):
     hostuid = need_user_id(host)
@@ -482,7 +482,7 @@ def need_is_host_of(host, guest):
                       (guestuid, hostuid))
     rs = list(rs)
     if not rs:
-        raise GAError("User {} is not host of {}".format(host, guest))
+        raise Unauthorized("User {} is not host of {}".format(host, guest))
 
 def need_sshkey(x):
     words = x.split()
