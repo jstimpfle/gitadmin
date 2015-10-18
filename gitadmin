@@ -218,7 +218,7 @@ stored_loguid = None
 conn = None
 
 # **********************************************************************
-# END GLOBAL STATE
+# ERRORS
 # **********************************************************************
 
 class GAError(Exception):
@@ -232,6 +232,10 @@ class InvalidArgument(GAError):
 class Unauthorized(GAError):
     def __str__(self):
         return "Permission denied: {}".format(*self.args)
+
+# **********************************************************************
+# FILE PATHS
+# **********************************************************************
 
 def basedir_filepath():
     return config['basedir']
@@ -272,6 +276,10 @@ def publicro_repo_dirpath(domain, repo):
     dirpath = publicro_domain_dirpath(domain)
     return os.path.join(dirpath, repo)
 
+# **********************************************************************
+# FILE SYSTEM STUFF
+# **********************************************************************
+
 def create_repos_dir():
     dirpath = repos_dirpath()
     os.mkdir(dirpath)
@@ -292,16 +300,27 @@ def create_database():
     c.close()
 
 def init_basedir():
+    path = basedir_filepath()
+
     # some best-effort sanity checks before writing to the filesystem...
-    basedir_exists = os.path.isdir(basedir_filepath())
-    basedir_empty = not basedir_exists or not os.listdir(basedir_filepath())
-    if not basedir_exists or not basedir_empty:
+    try:
+        have_empty_basedir = os.path.isdir(path) and not os.listdir(path)
+    except OSError as e:
+        raise GAError('Error while trying to access basedir "{}": {}'
+                      .format(path, e))
+    if not have_empty_basedir:
         raise GAError('The basedir {} does not exist or is not empty. '
-                      'Refusing to initialize'.format(basedir_filepath()))
-    create_repos_dir()
-    create_publicro_dir()
-    create_authorized_keys()
-    create_database()
+                      'Refusing to initialize'.format(path))
+
+    try:
+        create_repos_dir()
+        create_publicro_dir()
+        create_authorized_keys()
+        create_database()
+    except OSError as e:
+        raise GAError('Error while trying to initialize the basedir "{}". '
+                      'There might be leftover files. The error was: {}'
+                      .format(path, e))
 
 def create_domain_dir(domain):
     dirpath = domain_dirpath(domain)
@@ -334,20 +353,6 @@ def delete_publicro_domain_dir(domain):
     dirpath = publicro_domain_dirpath(domain)
     os.rmdir(dirpath)
 
-def connect_database():
-    global conn
-    dbpath = database_filepath()
-    if not os.path.isfile(dbpath):
-        raise GAError("Database doesn't exist. Call 'gitadmin --init'")
-    conn = sqlite3.connect(dbpath)
-    conn.isolation_level = None
-    conn.execute("PRAGMA FOREIGN_KEYS = ON")
-
-def disconnect_database():
-    global conn
-    conn.close()
-    conn = None
-
 def set_publicro_symlink(domain, repo):
     dirpath = repo_dirpath(domain, repo)
     linkpath = publicro_repo_dirpath(domain, repo)
@@ -371,6 +376,32 @@ def write_authorized_keys(contents):
         f.write(contents)
     os.rename(tmp, fpath)
 
+def connect_database():
+    global conn
+    dbpath = database_filepath()
+    if not os.path.isfile(dbpath):
+        raise GAError("Database doesn't exist. Call 'gitadmin --init'")
+    conn = sqlite3.connect(dbpath)
+    conn.isolation_level = None
+    conn.execute("PRAGMA FOREIGN_KEYS = ON")
+
+def disconnect_database():
+    global conn
+    conn.close()
+    conn = None
+
+def login_user(user):
+    """most functionality requires a setup with connect_database() and
+       login_user(), and teardown with disconnect_database()"""
+    global loguser
+    global loguid
+    global is_root
+    loguser = "root"
+    loguid = 0
+    loguid = need_user_id(user)
+    loguser = user
+    is_root = loguser == "root"
+
 def git_receive_pack(domain, repo):
     need_write_permission(domain, repo)
     path = repo_dirpath(domain, repo)
@@ -380,6 +411,10 @@ def git_upload_pack(domain, repo):
     need_read_permission(domain, repo)
     path = repo_dirpath(domain, repo)
     subprocess.call(['git-upload-pack', path])
+
+# **********************************************************************
+# OTHER HELPERS
+# **********************************************************************
 
 def format_authorized_keys_line(user, algo, key, comment):
     return ("""command="gitadmin -u {}" {} {} {}\n"""
@@ -589,6 +624,19 @@ def delete_user_db(uid):
     for r in rs:
         print("WARNING: Domain has no admin: {}".format(r[0]), file=sys.stderr)
 
+def print_table(rs):
+    rs = list(rs)
+    if is_stdout_tty:
+        for r in format_table(rs):
+            print(r)
+    else:
+        for r in rs:
+            print('\t'.join(str(c) for c in r))
+
+# **********************************************************************
+# COMMAND PARSING AND EXECUTION
+# **********************************************************************
+
 def split_cmdline(cmdline):
     cmdline = cmdline.strip()
     cmd = []
@@ -622,14 +670,50 @@ def split_cmdline(cmdline):
         cmd.append(word)
     return cmd
 
-def print_table(rs):
-    rs = list(rs)
-    if is_stdout_tty:
-        for r in format_table(rs):
-            print(r)
+def exec_cmd_array(cmd):
+    name, arguments = cmd[0], cmd[1:]
+    if name in root_cmds:
+        func = root_cmds[name]
+    elif name in domain_cmds:
+        func = domain_cmds[name]
+    elif name in user_cmds:
+        func = user_cmds[name]
     else:
-        for r in rs:
-            print('\t'.join(str(c) for c in r))
+        raise InvalidArgument("No such command: {}".format(name))
+    try:
+        func(*arguments)
+    except TypeError:
+        # for now, let's hope this is true
+        # using inspection before calling func would be overkill
+        raise InvalidArgument("wrong number of arguments: {}".format(name))
+
+def exec_cmdline(cmdline):
+    cmd_array = split_cmdline(cmdline)
+    if cmd_array:
+        return exec_cmd_array(cmd_array)
+
+def exec_git_cmdline(ssh_original_command):
+    regex = r"({}|{}) '({})/({})'".format(
+        'git-receive-pack', 'git-upload-pack', domainname_regex, reponame_regex)
+    m = exact_match(regex, ssh_original_command)
+    if m is None:
+        raise InvalidArgument(
+            "Invalid command: {}\n"
+            "Only\n"
+            "\tgit-receive-pack 'DOMAIN/REPO'\n"
+            "\tgit-upload-pack  'DOMAIN/REPO'\n"
+            "are allowed commands (DOMAIN and REPO must be valid names)."
+            .format(ssh_original_command)
+        )
+    cmd, domain, repo = m.groups()
+    if cmd == 'git-receive-pack':
+       git_receive_pack(domain, repo)
+    elif cmd == 'git-upload-pack':
+       git_upload_pack(domain, repo)
+
+# **********************************************************************
+# INTERACTIVE SHELL
+# **********************************************************************
 
 # Sorry to say it, but cmd.Cmd is a pile of crap
 class GitAdminShell(cmd.Cmd):
@@ -697,6 +781,10 @@ class GitAdminShell(cmd.Cmd):
     # compilation of registered do_* commands. Turn that off.
     def do_help(self, line):
         return self.default(line)
+
+# **********************************************************************
+# SOME HELPERS FOR GITADMIN COMMANDS ORGANIZATION
+# **********************************************************************
 
 def transaction(cmd):
     """Decorator used for most commands. Locks sqlite3 db globally"""
@@ -880,7 +968,6 @@ def repos(domain):
 
 @domaincmd
 def repo_perms(domain, repo):
-    domainid = need_domain_id(domain)
     repoid = need_repo_id(domain, repo)
     rs = conn.execute("""
         SELECT D.name, R.name, U.name, CASE WHEN P.mode=0 THEN "R" ELSE "RW" END
@@ -1031,76 +1118,8 @@ def delete_user(user):
     update_ssh_authorized_keys()
 
 # **********************************************************************
-# END GITADMIN COMMANDS
+# PROGRAM ARGUMENT PARSING AND INTERPRETATION
 # **********************************************************************
-
-def exec_cmd_array(cmd):
-    name, arguments = cmd[0], cmd[1:]
-    if name in root_cmds:
-        func = root_cmds[name]
-    elif name in domain_cmds:
-        func = domain_cmds[name]
-    elif name in user_cmds:
-        func = user_cmds[name]
-    else:
-        raise InvalidArgument("No such command: {}".format(name))
-    try:
-        func(*arguments)
-    except TypeError:
-        # for now, let's hope this is true
-        # using inspection before calling func would be overkill
-        raise InvalidArgument("wrong number of arguments: {}".format(name))
-
-def exec_cmdline(cmdline):
-    cmd_array = split_cmdline(cmdline)
-    if cmd_array:
-        return exec_cmd_array(cmd_array)
-
-def exec_git_cmdline(ssh_original_command):
-    # probably git-* will recognize 8bit unclean streams themselves...
-    #need_8bitclean()
-    regex = r"({}|{}) '({})/({})'".format(
-        'git-receive-pack', 'git-upload-pack', domainname_regex, reponame_regex)
-    m = exact_match(regex, ssh_original_command)
-    if m is None:
-        raise InvalidArgument(
-            "Invalid command: {}\n"
-            "Only\n"
-            "\tgit-receive-pack 'DOMAIN/REPO'\n"
-            "\tgit-upload-pack  'DOMAIN/REPO'\n"
-            "are allowed commands (DOMAIN and REPO must be valid names)."
-            .format(ssh_original_command)
-        )
-    cmd, domain, repo = m.groups()
-    if cmd == 'git-receive-pack':
-       git_receive_pack(domain, repo)
-    elif cmd == 'git-upload-pack':
-       git_upload_pack(domain, repo)
-
-def run_cmdstring_shell(cmdstring):
-    for line in cmdstring.splitlines():
-        exec_cmdline(line)
-
-def run_interactive_stdin_shell():
-    assert(is_interactive)
-    if is_root:
-        print("Starting root admin shell...")
-    GitAdminShell().cmdloop()
-
-def run_noninteractive_stdin_shell():
-    assert(not is_interactive)
-    for line in sys.stdin:
-        exec_cmdline(line)
-
-def login_user(user):
-    global loguser
-    global loguid
-    global is_root
-    loguser = "root"
-    loguid = 0
-    loguid = need_user_id(user)
-    loguser = user
-    is_root = loguser == "root"
 
 def need_dbconn(cmd):
     """decorator used by the process_* functions (except help() and init())"""
@@ -1137,16 +1156,20 @@ def process_cmd_array(cmd_array):
 def process_cmd_string(cmd_string):
     global is_interactive
     is_interactive = False
-    run_cmdstring_shell(cmd_string)
+    for line in cmdstring.splitlines():
+        exec_cmdline(line)
 
 @need_dbconn
 def process_stdin():
     global is_interactive
     is_interactive = is_stdin_tty and is_stderr_tty
     if is_interactive:
-        run_interactive_stdin_shell()
+        if is_root:
+            print("Starting root admin shell...", file=sys.stderr)
+        GitAdminShell().cmdloop()
     else:
-        run_noninteractive_stdin_shell()
+        for line in sys.stdin:
+            exec_cmdline(line)
 
 @need_dbconn
 def process_ssh_original_command(ssh_original_command):
