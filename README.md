@@ -4,8 +4,8 @@ Lightweight git authorization layer / repository administration tool
 - for small or mid-size groups
 - only 1200 lines of python3
 - maintains state in an sqlite3 database
-- users manage their ssh keys and their git repos through an interactive admin
-  shell
+- users manage their ssh keys and their git repos through an admin shell
+  (scriptable / interactive)
 - repos are organized in domains, much like github
 - each domain has a set of domain administrators who can modify the repos
   inside it or change their read/commit permissions.
@@ -21,11 +21,11 @@ public key for that user (su foouser add\_sshkey), and login again using that
 key, you'll get a gitadmin shell as that user. And you can also use that ssh
 login for git interactions such as git clone / git pull / git push.
 
-This isn't a stable version yet. If you are interested in improvements, help
-testing and get in touch. I'd love to use a plain text database and make it
-more modular, but some experience is missing and size matters...
+This isn't a stable version yet. If you are interested in improvements, get in
+touch and help testing. I'd love to use a plain text database and make it more
+modular, but size matters and some experience is missing...
 
 gitadmin was written in 2015 by Jens Stimpfle, with some support from Ahmet
 Inan and Philipp Falk.
 
-License: Public domain
+License: Just do what you want with it.
