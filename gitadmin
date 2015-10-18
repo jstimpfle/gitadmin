@@ -142,7 +142,7 @@ CREATE TABLE repo
 CREATE TABLE permissions
 ( repoid INTEGER NOT NULL
 , userid INTEGER NOT NULL
-, mode INTEGER NOT NULL  -- 0 or 1 (R or RW)
+, mode INTEGER NOT NULL CHECK (mode = 0 or mode = 1)
 --
 , FOREIGN KEY (repoid) REFERENCES repo(id)
 , FOREIGN KEY (userid) REFERENCES user(id)
