@@ -631,36 +631,72 @@ def print_table(rs):
         for r in rs:
             print('\t'.join(str(c) for c in r))
 
+# Sorry to say it, but cmd.Cmd is a pile of crap
 class GitAdminShell(cmd.Cmd):
-    def __init__(self, intro='', prompt=''):
-        super().__init__()
+    intro = shell_intro
+    prompt = shell_prompt
 
+    @classmethod
+    def install_docmd(cls, cmd):
+        """install commands with this method to get tab completion for
+         the command name"""
+        def func(self, line):
+            return exec_cmdline('{} {}'.format(cmd.__name__, line))
+        setattr(cls, 'do_' + cmd.__name__, func)
+
+    def __init__(self):
+        # Override the bad decision to output prompts to sys.stdout.
+        # The docs don't hint that the completekey default argument of 'Tab' is
+        # really a string (!). Giving None instead doesn't restore the default
+        # behaviour but instead disables completion -- but hey, that saved one
+        # configuration option.
+        super().__init__('Tab', sys.stdin, sys.stderr)
+
+    # We need to override this method because the default is to repeat
+    # the last command. Useful.
     def emptyline(self):
         pass
 
+    # 'EOF' is used to indicate that the stdin stream has ended. A STRING. I'm
+    # not making this up. And why do we need to handle this at all by default?
     def default(self, line):
-        if line in ['EOF','exit','quit']:
-            print()
-            sys.exit(0)
+        if line in ['EOF', 'exit', 'quit']:
+            # On EOF, before exiting, end the line which the prompt started.
+            if line == 'EOF':
+                print()
+            # indicate that the interpreter should be ended
+            return True
         else:
             raise InvalidArgument("Couldn't parse command")
 
+    # We must override this method to be able to handle exceptions from
+    # executed commands
     def onecmd(self, line):
         try:
-            super().onecmd(line)
+            # All commands should return None, except default() above where we
+            # return True for EOF, exit, or quit
+            return super().onecmd(line)
         except GAError as e:
             print("ERROR:", e, file=sys.stderr)
+            return False
 
+    # We must override this method because keyboard interrupts at the prompt
+    # can't be handled in onecmd(). This will cost some stack space, but who
+    # cares.
     def cmdloop(self):
         try:
-            super().cmdloop()
+            return super().cmdloop()
         except KeyboardInterrupt as e:
+            # start a new line
             print()
-            self.intro = None  # HACK
-            self.cmdloop()
+            # before looping again, make sure intro won't be displayed again.
+            self.intro = None
+            return self.cmdloop()
 
-    intro = shell_intro
-    prompt = shell_prompt
+    # By default, the built-in do_help command prints a barely useful
+    # compilation of registered do_* commands. Turn that off.
+    def do_help(self, line):
+        return self.default(line)
 
 def transaction(cmd):
     """Decorator used for most commands. Locks sqlite3 db globally"""
@@ -686,20 +722,15 @@ def transaction(cmd):
         return r
     return func
 
-def install_docmd(cmd):
-    def func(self, x):
-        return exec_cmdline('{} {}'.format(cmd.__name__, x))
-    setattr(GitAdminShell, 'do_' + cmd.__name__, func)
-
 def sucmd(cmd):
-    install_docmd(cmd)
+    GitAdminShell.install_docmd(cmd)
     def func(*args, **kwargs):
         need_is_root()
         return cmd(*args, **kwargs)
     root_cmds[cmd.__name__] = func
 
 def rootcmd(cmd):
-    install_docmd(cmd)
+    GitAdminShell.install_docmd(cmd)
     @transaction
     def func(*args, **kwargs):
         need_is_root()
@@ -707,7 +738,7 @@ def rootcmd(cmd):
     root_cmds[cmd.__name__] = func
 
 def domaincmd(cmd):
-    install_docmd(cmd)
+    GitAdminShell.install_docmd(cmd)
     @transaction
     def func(domain, *args, **kwargs):
         need_domain_id(domain)
@@ -716,14 +747,14 @@ def domaincmd(cmd):
     domain_cmds[cmd.__name__] = func
 
 def usercmd(cmd):
-    install_docmd(cmd)
+    GitAdminShell.install_docmd(cmd)
     @transaction
     def func(*args, **kwargs):
         return cmd(*args, **kwargs)
     user_cmds[cmd.__name__] = func
 
 def dflcmd(cmd):
-    install_docmd(cmd)
+    GitAdminShell.install_docmd(cmd)
     @transaction
     def func(*args, **kwargs):
         return cmd(*args, **kwargs)
@@ -1099,12 +1130,7 @@ def process_init_request():
 @need_dbconn
 def process_cmd_array(cmd_array):
     global is_interactive
-    # other shells test only stdin and stderr. But Cmd.cmd prints prompts to
-    # stdout instead of stderr (can we fix that?), so for example, after
-    # "x=$(gitadmin whoami)" x contains not only a username but also the
-    # prompts. For this reason we test also whether stdout is a tty, to run a
-    # noninteractive shell if we are being run inside a command substitution.
-    is_interactive = is_stdin_tty and is_stdout_tty and is_stderr_tty
+    is_interactive = is_stdin_tty and is_stderr_tty
     exec_cmd_array(cmd_array)
 
 @need_dbconn
@@ -1116,8 +1142,7 @@ def process_cmd_string(cmd_string):
 @need_dbconn
 def process_stdin():
     global is_interactive
-    # the same as in process_cmd_array() applies for this decision
-    is_interactive = is_stdin_tty and is_stdout_tty and is_stderr_tty
+    is_interactive = is_stdin_tty and is_stderr_tty
     if is_interactive:
         run_interactive_stdin_shell()
     else:
