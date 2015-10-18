@@ -194,7 +194,6 @@ comment_regex = r"""[]abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012345
 # **********************************************************************
 
 # filled later when functions are defined
-dfl_cmds = {}
 user_cmds = {}
 domain_cmds = {}
 root_cmds = {}
@@ -402,16 +401,6 @@ def login_user(user):
     loguser = user
     is_root = loguser == "root"
 
-def git_receive_pack(domain, repo):
-    need_write_permission(domain, repo)
-    path = repo_dirpath(domain, repo)
-    subprocess.call(['git-receive-pack', path])
-
-def git_upload_pack(domain, repo):
-    need_read_permission(domain, repo)
-    path = repo_dirpath(domain, repo)
-    subprocess.call(['git-upload-pack', path])
-
 # **********************************************************************
 # OTHER HELPERS
 # **********************************************************************
@@ -459,10 +448,10 @@ def need_is_valid_username(x):
         raise InvalidArgument("'{}' is not a valid user name".format(x))
 
 def need_is_valid_guestname(x):
-    need_is_valid_username(x)
     if not x.startswith('guest-'):
         raise InvalidArgument("'{}' ist not a valid guest user name:"
                               " must have \"guest-\" prefix".format(x))
+    need_is_valid_username(x)
 
 def need_is_valid_usercomment(x):
     if not exact_match(usercomment_regex, x):
@@ -603,13 +592,13 @@ def update_ssh_authorized_keys():
     cts = format_authorized_keys(rs)
     write_authorized_keys(cts)
 
-def add_user_db(name, comment, host=None):
+def add_user_db(user, comment, host=None):
     """shared by create_user() and create_guest()"""
     try:
         conn.execute("""INSERT INTO user (host, name, comment)
-                        VALUES (?, ?, ?)""", (host, name, comment))
+                        VALUES (?, ?, ?)""", (host, user, comment))
     except sqlite3.IntegrityError:
-        raise GAError("User exists: {}".format(name))
+        raise GAError("User exists: {}".format(user))
 
 def delete_user_db(uid):
     """shared by delete_user() and delete_guest()"""
@@ -623,6 +612,16 @@ def delete_user_db(uid):
            ORDER BY D.name""")
     for r in rs:
         print("WARNING: Domain has no admin: {}".format(r[0]), file=sys.stderr)
+
+def git_receive_pack(domain, repo):
+    need_write_permission(domain, repo)
+    path = repo_dirpath(domain, repo)
+    subprocess.call(['git-receive-pack', path])
+
+def git_upload_pack(domain, repo):
+    need_read_permission(domain, repo)
+    path = repo_dirpath(domain, repo)
+    subprocess.call(['git-upload-pack', path])
 
 def print_table(rs):
     rs = list(rs)
@@ -654,11 +653,11 @@ def split_cmdline(cmdline):
         elif char == '"':
             quoted = not quoted
             started = True
-        elif char in [' ','\t'] and not quoted:
+        elif char in [' ','\t','\n','\r'] and not quoted:
             if started:
                 cmd.append(word)
-            word = ""
-            started = False
+                word = ""
+                started = False
         else:
             word += char
             started = True
@@ -690,7 +689,7 @@ def exec_cmd_array(cmd):
 def exec_cmdline(cmdline):
     cmd_array = split_cmdline(cmdline)
     if cmd_array:
-        return exec_cmd_array(cmd_array)
+        exec_cmd_array(cmd_array)
 
 def exec_git_cmdline(ssh_original_command):
     regex = r"({}|{}) '({})/({})'".format(
@@ -715,7 +714,7 @@ def exec_git_cmdline(ssh_original_command):
 # INTERACTIVE SHELL
 # **********************************************************************
 
-# Sorry to say it, but cmd.Cmd is a pile of crap
+# Sorry to say it, but cmd.Cmd is not a good API
 class GitAdminShell(cmd.Cmd):
     intro = shell_intro
     prompt = shell_prompt
@@ -729,7 +728,7 @@ class GitAdminShell(cmd.Cmd):
         setattr(cls, 'do_' + cmd.__name__, func)
 
     def __init__(self):
-        # Override the bad decision to output prompts to sys.stdout.
+        # Override the bad default to output prompts to sys.stdout.
         # The docs don't hint that the completekey default argument of 'Tab' is
         # really a string (!). Giving None instead doesn't restore the default
         # behaviour but instead disables completion -- but hey, that saved one
@@ -737,17 +736,17 @@ class GitAdminShell(cmd.Cmd):
         super().__init__('Tab', sys.stdin, sys.stderr)
 
     # We need to override this method because the default is to repeat
-    # the last command. Useful.
+    # the last command.
     def emptyline(self):
         pass
 
-    # 'EOF' is used to indicate that the stdin stream has ended. A STRING. I'm
-    # not making this up. And why do we need to handle this at all by default?
+    # 'EOF' (a string) is used to indicate that the stdin stream has ended. Not
+    # making this up. And why do we need to handle this at all by default?
     def default(self, line):
         if line in ['EOF', 'exit', 'quit']:
             # On EOF, before exiting, end the line which the prompt started.
             if line == 'EOF':
-                print()
+                print('', file=sys.stderr)
             # indicate that the interpreter should be ended
             return True
         else:
@@ -841,18 +840,11 @@ def usercmd(cmd):
         return cmd(*args, **kwargs)
     user_cmds[cmd.__name__] = func
 
-def dflcmd(cmd):
-    GitAdminShell.install_docmd(cmd)
-    @transaction
-    def func(*args, **kwargs):
-        return cmd(*args, **kwargs)
-    user_cmds[cmd.__name__] = func
-
 # **********************************************************************
 # GITADMIN COMMANDS
 # **********************************************************************
 
-@dflcmd
+@usercmd
 def info():
     print(shell_usage)
 
@@ -925,7 +917,7 @@ def create_guest(guest, comment):
     need_is_valid_guestname(guest)
     need_is_valid_usercomment(comment)
     host = loguid
-    add_user_db(host, guest, comment)
+    add_user_db(guest, comment, host)
     uid = need_user_id(guest)
     algo, key, keycomment = userinput_sshkey(
         "You need to provide an initial public key for your guest")
@@ -938,7 +930,6 @@ def delete_guest(guest):
     need_is_host_of(loguser, guest)
     uid = need_user_id(guest)
     delete_user_db(uid)
-    warn_unadministered_domains()
     update_ssh_authorized_keys()
 
 @usercmd
@@ -1114,7 +1105,6 @@ def delete_user(user):
         return
     uid = need_user_id(user)
     delete_user_db(uid)
-    warn_unadministered_domains()
     update_ssh_authorized_keys()
 
 # **********************************************************************
@@ -1156,8 +1146,7 @@ def process_cmd_array(cmd_array):
 def process_cmd_string(cmd_string):
     global is_interactive
     is_interactive = False
-    for line in cmdstring.splitlines():
-        exec_cmdline(line)
+    exec_cmdline(line)
 
 @need_dbconn
 def process_stdin():
@@ -1236,6 +1225,7 @@ def main(argv, ssh_original_command=None):
         sys.exit(1)
     except KeyboardInterrupt:
         print("Keyboard interrupt", file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == '__main__':
     main(sys.argv, os.getenv('SSH_ORIGINAL_COMMAND'))
