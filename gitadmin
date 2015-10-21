@@ -966,8 +966,9 @@ def delete_guest(guest):
 
 @usercmd
 def guests():
-    rs = select("SELECT name, comment FROM user WHERE host = ?",
-                 (loguid,))
+    rs = select("""SELECT U.name, U.comment
+                   FROM user U JOIN guest G ON U.id = G.guestid
+                   WHERE G.hostid = ?""", (loguid,))
     print_table(rs)
 
 @domaincmd
