@@ -8,9 +8,11 @@
 #
 
 import os, sys, re
+import shlex
 import sqlite3
-import readline, cmd
 import inspect
+import traceback
+import readline, cmd
 
 is_stdin_tty  = os.isatty(sys.stdin.fileno())
 is_stdout_tty = os.isatty(sys.stdout.fileno())
@@ -29,13 +31,17 @@ config_basedir = 'gitadmin-basedir'
 # These regexen can be tweaked, but additionally the following assumptions
 # will be checked for any value that goes in the DB:
 #
-# - repos and domains need to be valid filepath components (x not in ['.','..'] and '/' not in x)
-# - other than comments which are always printed in the last column, no whitespace allowed (which would prohibit scripting)
+# - repos and domains need to be valid filepath components (not "." or "..",
+#   does not contain "/" or "\"
+# - other than comments which are always printed in the last column, no
+#   whitespace allowed (which would prohibit scripting)
 # - multiple lines not allowed (currently check for \r and \n)
 #
 # Warning: user names go to the authorized_keys file. Dangerous!
-# There may be other, undocumented assumptions. It's probably unwise to allow shell special characters in non-comment data.
+# There may be other, undocumented assumptions. It's probably unwise to allow
+# shell special characters in non-comment data.
 
+# as per the python3 documentation, character classes ([a-z] etc) are ASCII
 username_regex      = r"""[a-z][a-z0-9]{1,15}"""
 domainname_regex    = r"""[a-z][a-z0-9]{1,15}"""
 reponame_regex      = r"""[a-zA-Z][a-zA-Z0-9_-]{1,15}"""
@@ -52,9 +58,6 @@ sshkeycomment_regex = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
 
 # (effective) gitadmin user
 loguser = None
-
-# indicates whether we're running the su command
-running_su = False
 
 # DB connection
 conn = None
@@ -131,7 +134,7 @@ gitadmin [-u USER]
 SSH_ORIGINAL_CMD=GITCMD gitadmin [-u USER]
 
     Validate the environment variable SSH_ORIGINAL_CMD as an allowed
-    git request (git-receive-pack 'DOMAIN/REPO' or git-upload-pack
+    git request (git-upload-pack 'DOMAIN/REPO' or git-receive-pack
     'DOMAIN/REPO', as can be observed with the git reference
     implementation) and execute it as a subprocess if the requesting user
     has appropriate permission.  This allows the actual git traffic, like
@@ -146,26 +149,27 @@ shell_intro = "Welcome to gitadmin. Type 'info' for a list of available commands
 shell_prompt = "gitadmin> "
 
 commands_listing = r"""
-Root admin commands:
+ Root admin commands:
 
-  su USER CMD...
-  create_domain DOMAIN COMMENT
-  delete_domain DOMAIN
-  create_user USER COMMENT
-  delete_user USER
-                                             User commands:
-Domain admin commands:
-                                               info
-  admins DOMAIN                                whoami
-  repos DOMAIN                                 users
-  repo_perms DOMAIN REPO                       domains
-  set_domain_admin DOMAIN USER                 perms
-  unset_domain_admin DOMAIN USER               sshkeys
-  create_repo DOMAIN REPO COMMENT              add_sshkey
-  delete_repo DOMAIN REPO                      remove_sshkey
-  set_repo_comment DOMAIN REPO COMMENT         guests
-  set_perm DOMAIN REPO USER <none|R|RW>        create_guest USER COMMENT
-  set_public DOMAIN REPO <true|false>          delete_guest USER
+   su USER CMD...
+   create_domain DOMAIN COMMENT
+   delete_domain DOMAIN
+   create_user USER COMMENT
+   delete_user USER
+                                              User commands:
+ Domain admin commands:
+                                                info
+   admins DOMAIN                                whoami
+   repos DOMAIN                                 users
+   repo_perms DOMAIN REPO                       domains
+   set_domain_admin DOMAIN USER                 perms
+   unset_domain_admin DOMAIN USER               sshkeys
+   create_repo DOMAIN REPO COMMENT              add_sshkey
+   delete_repo DOMAIN REPO                      remove_sshkey
+   set_repo_comment DOMAIN REPO COMMENT         guests
+   set_perm DOMAIN REPO USER <none|R|RW>        create_guest USER COMMENT
+   set_public DOMAIN REPO <true|false>          delete_guest USER
+
 """
 
 sql_schema = r"""
@@ -218,9 +222,8 @@ CREATE TABLE perm
 , perm   VARCHAR NOT NULL
 --
 , PRIMARY KEY (domain, repo, user)
-, FOREIGN KEY (domain) REFERENCES domain (domain)
-, FOREIGN KEY (repo)   REFERENCES repo   (repo)
-, FOREIGN KEY (user)   REFERENCES user   (user)
+, FOREIGN KEY (domain, repo) REFERENCES repo (domain, repo)
+, FOREIGN KEY (user)         REFERENCES user (user)
 , CHECK (perm == "R" OR perm == "RW")
 );
 
@@ -256,30 +259,26 @@ CREATE TABLE guest
 
 class GA_Exception(Exception):
     """base class for all gitadmin exceptions"""
-    msg = "UNSPECIFIED-ERROR"
+    msg = "UNKNOWN-ERROR"
 
-# This should normally not happen
+class GA_CLIError(GA_Exception):
+    """Wrong command-line invocation"""
+    msg = "COMMANDLINE-ERROR"
+
+class GA_Invalid(GA_Exception):
+    """command could not be parsed, or wrong number of arguments, or one or
+       more arguments did not match the according regular expression"""
+    msg = "INVALID-COMMAND"
 
 class GA_FSError(GA_Exception):
     """An error from the filesystem or the OS during a gitadmin operation"""
     msg = "FS-ERROR"
 
-# This indicates a program logic error (or someone messed with DB or FS)
+class GA_DBError(GA_Exception):
+    """An error from the database or the OS during a gitadmin operation"""
+    msg = "DB-ERROR"
 
-class GA_InternalError(GA_Exception):
-    """An operation could not be performed because a DB constraint was
-       violated, or the FS is in inconsistent state, for otherwise unknown
-       reasons"""
-    msg = "INTERNAL-ERROR"
-
-# This indicates wrong usage (command line)
-
-class GA_Invalid(GA_Exception):
-    """A command could not be parsed, or wrong number of arguments, or one or
-       more arguments did not match the according regular expression"""
-    msg = "INVALID-COMMAND"
-
-# This happens on more trivial failure to satisfy authorization constraints
+# more trivial failure to satisfy authorization constraints
 # (root / domain admin required)
 
 class GA_Unauthorized(GA_Exception):
@@ -287,7 +286,7 @@ class GA_Unauthorized(GA_Exception):
        authorization"""
     msg = "UNAUTHORIZED"
 
-# These occurr when an operation can't satisfy DB constraints
+# these occurr when an operation can't satisfy DB constraints
 
 class GA_NotPossible(GA_Exception):
     """Base class for exceptions from operations that were syntactically valid
@@ -355,14 +354,14 @@ def write_file(filepath, rawbytes):
 
 def create_db():
     if os.path.exists(path_database()):
-        raise GA_Exception("Database exists. Refusing to create")
+        raise GA_DBError("Database exists. Refusing to create")
     try:
         conn = sqlite3.connect(path_database(), isolation_level=None)
         conn.execute("PRAGMA FOREIGN_KEYS = ON")
         conn.executescript(sql_schema)
         conn.close()
     except sqlite3.Error as e:
-        raise GA_Exception("Error creating Database: {}".format(e))
+        raise GA_DBError("Error creating Database: {}".format(e))
 
 def connect_db():
     global conn
@@ -372,69 +371,80 @@ def connect_db():
         conn = sqlite3.connect(path_database(), isolation_level=None)
         conn.execute("PRAGMA FOREIGN_KEYS = ON")
     except sqlite3.Error as e:
-        raise GA_Exception("Error opening Database: {}".format(e))
+        raise GA_DBError("Error opening Database: {}".format(e))
 
 def disconnect_db():
     global conn
     try:
         conn.close()
     except sqlite3.Error as e:
-        raise GA_Exception("Error closing Database: {}".format(e))
+        raise GA_DBError("Error closing Database: {}".format(e))
     conn = None
 
-def with_db(fun, *args):
-    connect_db()
-    try:
-        fun(*args)
-    finally:
-        disconnect_db()
-
-def start_db_transaction():
+def begin_db_transaction():
     global conn
     try:
         conn.execute("BEGIN TRANSACTION")
     except sqlite3.Error as e:
-        raise GA_Exception("Error starting DB transaction: {}".format(e))
+        raise GA_DBError("Error starting DB transaction: {}".format(e))
 
 def end_db_transaction():
     global conn
     try:
         conn.execute("END TRANSACTION")
     except sqlite3.Error as e:
-        raise GA_Exception("Error committing DB transaction: {}".format(e))
+        raise GA_DBError("Error committing DB transaction: {}".format(e))
 
 def abort_db_transaction():
     global conn
     try:
         conn.execute("ROLLBACK")
     except sqlite3.Error as e:
-        raise GA_Exception("Error while aborting DB transaction: {}".format(e))
+        raise GA_DBError("Error while aborting DB transaction: {}".format(e))
+
+def with_db(fun, *args):
+    connect_db()
+    try:
+        return fun(*args)
+    finally:
+        disconnect_db()
+
+def run_transaction(fun, *args):
+    begin_db_transaction()
+    try:
+        r = fun(*args)
+    except:
+        abort_db_transaction()
+        raise
+    else:
+        end_db_transaction()
+        return r
 
 def select(sql, args=()):
     global conn
-    rs = conn.execute(sql, args)
-    return list(rs)
+    try:
+        rs = conn.execute(sql, args)
+        return list(rs)
+    except sqlite3.Error as e:
+        raise GA_DBError("Error while executing DB command: {}".format(e))
 
 def exists(sql, args=()):
     global conn
-    rs = conn.execute(sql, args)
-    return bool(list(rs))
+    try:
+        rs = conn.execute(sql, args)
+        return bool(list(rs))
+    except sqlite3.Error as e:
+        raise GA_DBError("Error while executing DB command: {}".format(e))
 
 def delete(sql, args=()):
     global conn
-    try:
-        conn.execute(sql, args)
-        rs = conn.execute("SELECT CHANGES()")
-        return list(rs)[0][0]
-    except sqlite3.IntegrityError as e:
-        raise GA_InternalError(e)
+    conn.execute(sql, args)
+    rs = conn.execute("SELECT CHANGES()")
+    return list(rs)[0][0]
 
 def insert(sql, args=()):
     global conn
-    try:
-        conn.execute(sql, args)
-    except sqlite3.IntegrityError as e:
-        raise GA_InternalError("Database integrity constraint violated")
+    conn.execute(sql, args)
 
 # Validation
 
@@ -453,6 +463,12 @@ def is_fs_component(x):
 def need_valid_username(user):
     if not is_word(user) or not exact_match(username_regex, user):
         raise GA_Invalid("'{}' is not a valid user name".format(user))
+
+def need_valid_guestname(user):
+    if not user.startswith('guest-'):
+        raise GA_Invalid("'{}' is not a valid guest user name (must start with guest-)".format(user))
+    if not exact_match(r'guest-' + username_regex, user):
+        raise GA_Invalid("'{}' is not a valid guest user name".format(user))
 
 def need_valid_domainname(domain):
     if not is_fs_component(domain) or not exact_match(domainname_regex, domain):
@@ -478,10 +494,6 @@ def need_valid_boolean(boolean):
     if boolean not in ['true', 'false']:
         raise GA_Invalid("'{}' is not a valid boolean. Need 'true' or 'false'".format(boolean))
 
-def need_no_su_nesting(args):
-    if args[0] == 'su':
-        raise GA_Invalid("nesting of 'su' command not possible")
-
 # Authorization
 
 def require_root_admin():
@@ -493,11 +505,26 @@ def require_domain_admin(domain):
     if loguser not in map(lambda r: r[1], adm):
         raise GA_Unauthorized("domain admin privileges needed")
 
+def require_regular_user():
+    if loguser is None:
+        # XXX: weird to forbid root something and other users not
+        raise GA_Unauthorized("root user can't create guests")
+    guests = db_list_guests()
+    if loguser in guests:
+        raise GA_Unauthorized("guests are not allowed to create other guests")
+
+def require_host_of_guest(guest):
+    if loguser is not None:
+        # XXX: weird to forbid root something and other users not
+        raise GA_Unauthorized("root user can't delete guests")
+    guests = db_list_user_guests(loguser)
+    if guest not in guests:
+        raise GA_Unauthorized("not one of your guests")
+
 # Formatting
 
 def format_authorized_keys(rs):
-    return ''.join('command="gitadmin -u {}" {} {} {}\n'.format(user, algo, key, comment)
-                   for user, algo, key, comment in rs)
+    return ''.join('command="gitadmin -u {}" {} {} {}\n'.format(user, algo, key, comment) for user, algo, key, comment in rs)
 
 def format_table(rs):
     # TODO: Not here
@@ -611,10 +638,9 @@ def db_list_repo_perms(domain, repo):
     return select("SELECT domain, repo, user, perm FROM perm WHERE domain = ? AND repo = ?", (user,))
 
 def db_insert_user(user, comment):
-    try:
-        insert("INSERT INTO user (user, comment) VALUES (?, ?)", (user, comment))
-    except GA_InternalError:
+    if exists("SELECT 1 FROM user WHERE user = ?", (user,)):
         raise GA_Exists("User already exists")
+    insert("INSERT INTO user (user, comment) VALUES (?, ?)", (user, comment))
 
 def db_insert_domain(domain, comment):
     if exists("SELECT 1 FROM domain WHERE domain = ?", (domain,)):
@@ -634,9 +660,11 @@ def db_insert_sshkey(user, algo, key, comment):
     insert("INSERT INTO sshkey (user, algo, key, comment) VALUES (user, algo, key, comment)", (user, algo, key, comment))
 
 def db_delete_user(user):
+    # also works for deletion of guests
     if not exists("SELECT 1 FROM user WHERE user = ?", (user,)):
         raise GA_NotFound("User not found")
     delete("DELETE FROM guest WHERE host = ?", (user,))
+    delete("DELETE FROM guest WHERE guest = ?", (user,))
     delete("DELETE FROM sshkey WHERE user = ?", (user,))
     delete("DELETE FROM admin WHERE user = ?", (user,))
     delete("DELETE FROM perm WHERE user = ?", (user,))
@@ -740,11 +768,11 @@ def fs_clear_publicro_symlink(domain, repo):
 # GIT CALLS
 # **********************************************************************
 
-def git_send_pack(domain, repo):
-    checked_call("git-send-pack", "{}/{}".format(domain, repo))
-
 def git_upload_pack(domain, repo):
     checked_call("git-upload-pack", "{}/{}".format(domain, repo))
+
+def git_receive_pack(domain, repo):
+    checked_call("git-receive-pack", "{}/{}".format(domain, repo))
 
 # **********************************************************************
 # GITADMIN TASKS
@@ -761,7 +789,7 @@ def git_upload_pack(domain, repo):
 #              DB always comes first because we can't revert FS operation
 #              State will be left inconsistent when FS fails.
 #              (TODO: notify admin?)
-# 
+#
 
 def valid_info():
     return
@@ -797,6 +825,13 @@ def valid_create_user(user, comment):
 def valid_delete_user(user):
     need_valid_username(user)
 
+def valid_create_guest(guest, comment):
+    need_valid_guestname(guest)
+    need_valid_usercomment(comment)
+
+def valid_delete_guest(guest):
+    need_valid_guestname(guest)
+
 def valid_create_domain(domain, comment):
     need_valid_domainname(domain)
     need_valid_domaincomment(comment)
@@ -818,9 +853,19 @@ def valid_set_public(domain, repo, public):
     need_valid_reponame(repo)
     need_valid_boolean(public)
 
-def valid_su(user, *args):
-    need_valid_username(user)
-    need_no_su_nesting(args)
+def need_repospec_from_git_repo_path(rest):
+    # we need to imitate how a normal shell would parse the command line
+    # for example, when you say: git clone git@foo.com/joe/project
+    # git does something like: ssh git@foo.com "git-upload-pack 'joe/project'"
+    ws = shlex.split(rest)
+    if len(ws) == 1:
+        xs = ws[0].split('/')
+        if len(xs) == 2:
+            d, r = xs
+            need_valid_domainname(d)
+            need_valid_reponame(r)
+            return d, r
+    raise GA_Invalid("Could not parse {} as a valid repospec (something like 'joe/project')".format(rest))
 
 #
 
@@ -857,6 +902,12 @@ def auth_create_user(user, comment):
 def auth_delete_user(user):
     require_root_admin()
 
+def auth_create_guest(guest, comment):
+    require_regular_user()
+
+def auth_delete_guest(guest):
+    require_host_of_guest(guest)
+
 def auth_create_domain(domain, comment):
     require_root_admin()
 
@@ -875,16 +926,13 @@ def auth_set_perm(domain, repo, user, perm):
 def auth_set_public(domain, repo, public):
     require_domain_admin(domain)
 
-def auth_su(user, *args):
-    require_root_admin()
-
 #
 
 def task_info():
-    return
+    return [commands_listing]
 
 def task_whoami():
-    return
+    return [(loguser or '(root)') + '\n']
 
 def task_users():
     return db_list_users()
@@ -963,31 +1011,33 @@ def task_set_public(domain, repo, public):
     else:
         fs_clear_publicro_symlink(domain, repo)
 
-def task_su(user, *args):
-    global loguser
-    global running_su
-
-    assert loguser is None
-    assert not running_su
-
-    loguser = user
-    running_su = True
-    try:
-        exec_cmd_array(user, args)
-    finally:
-        loguser = None
-        running_su = False
-
 # **********************************************************************
 # COMMAND EXECUTION
 # **********************************************************************
 
+def exec_git_upload_pack(rest):
+    domain, repo = need_repospec_from_git_repo_path(rest)
+
+    require_read_perm(domain, repo)
+
+    git_upload_pack(domain, repo)
+
+def exec_git_receive_pack(rest):
+    domain, repo = need_repospec_from_git_repo_path(rest)
+
+    require_write_perm(domain, repo)
+
+    git_receive_pack(domain, repo)
+
 def exec_cmd_array(user, args):
     global loguser
-    global running_su
 
     if not args:
         return
+
+    if user is None and len(args) >= 2 and args[0] == 'su':
+        user = args[1]
+        args = args[2:]
 
     auth  = globals().get('auth_'  + args[0])
     valid = globals().get('valid_' + args[0])
@@ -1006,35 +1056,38 @@ def exec_cmd_array(user, args):
         (task_spec[1] is not None and len(args) - 1 < len(task_spec[0]))):
         raise GA_Invalid("too few or too many arguments. Usage: {} {}".format(args[0], ' '.join(x.upper() for x in task_spec[0])))
 
-    # running_su indicates whether this function is called from task_su(). If it
-    # is set, we don't call the transaction functions since DB transactions
-    # can't be nested.
-
     loguser = user
-    valid(*args[1:])
+
     try:
-        if not running_su:
-            start_db_transaction()
-        try:
+        valid(*args[1:])
+
+        def execute():
             auth(*args[1:])
-            r = task(*args[1:])
-        except:
-            abort_db_transaction()
-            raise
-        else:
-            if not running su:
-                end_db_transaction()
+            return task(*args[1:])
+
+        r = run_transaction(execute)
+
+        for x in list(r or []):
+            sys.stdout.write(x)
+
     finally:
         loguser = None
-
-    for x in list(r or []):
-        sys.stdout.write(x)
 
 # **********************************************************************
 # COMMAND-LINE SPLITTING AND INTERACTIVE SHELL
 # **********************************************************************
 
 def split_cmd_string(cmd_string):
+    #
+    # Should this shell-style splitting really be reimplemented?
+    #
+    # Maybe we could get along with just whitespace splitting
+    # (comments as the only thing where whitespace is allowed are always at the
+    # end)
+    #
+    # The shlex module could be used as well. But shlex's supported syntax is
+    # even more complicated than the one implemented below.
+    #
     cmd = ()
     word = ""
     started = False
@@ -1148,6 +1201,15 @@ def invoke_exec_cmdstring(user, cmd_string):
     with_db(exec_cmd_array, user, split_cmd_string(cmd_string))
 
 def invoke_exec_sshoriginalcommand(user, ssh_original_command):
+    ws = ssh_original_command.split(None, 1)
+    if len(ws) == 2 and ws[0] == 'git-upload-pack':
+        with_db(exec_git_upload_pack, ws[1])
+    elif len(ws) == 2 and ws[0] == 'git-receive-pack':
+        with_db(exec_git_receive_pack, ws[1])
+    elif len(ws) == 2 and ws[0] == 'gitadmin':
+        with_db(exec_cmd_array, split_cmd_string(ws[1]))
+    else:
+        raise GA_Invalid("Invalid invocation (SSH_ORIGINAL_COMMAND): need \"git-(upload|receive)-pack 'DOMAIN/REPO'\" or \"gitadmin <GITADMIN-CMD>\"", file=sys.stderr)
 
 def invoke_shell(user):
     if is_stdin_tty and is_stderr_tty:
@@ -1211,4 +1273,18 @@ def gitadmin(argv, ssh_original_command=None):
         invoke_shell(req_user)
 
 if __name__ == '__main__':
-    gitadmin(sys.argv, os.getenv('SSH_ORIGINAL_COMMAND'))
+    try:
+        gitadmin(sys.argv, os.getenv('SSH_ORIGINAL_COMMAND'))
+    except GA_CLIError as e:
+        print("gitadmin: ERROR: {}".format(e), file=sys.stderr)
+        sys.exit(1)
+    except GA_Invalid as e:
+        print("gitadmin: ERROR: {}".format(e), file=sys.stderr)
+        sys.exit(2)
+    except GA_Exception as e:
+        print("gitadmin: ERROR: {}".format(e), file=sys.stderr)
+        sys.exit(3)
+    except Exception as e:
+        print("gitadmin: ERROR: {}".format(traceback.format_exc()), file=sys.stderr)
+    else:
+        sys.exit(0)
