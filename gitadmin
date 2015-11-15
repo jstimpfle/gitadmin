@@ -1,5 +1,12 @@
 #!/usr/bin/python3
 
+#
+# gitadmin - Copyright (c) 2015, Jens Stimpfle
+#
+# Find invocation instructions below
+# and documentation throughout the code
+#
+
 import os, sys, re
 import sqlite3
 import readline, cmd
@@ -19,22 +26,25 @@ config_basedir = 'gitadmin-basedir'
 # REGEXEN
 # **********************************************************************
 
-# These regexen can be tweaked, but one must be careful not to violate internal
-# assumptions:
-# - repos and domains are valid filepath components (x not in ['.','..'] and '/' not in x)
-# - other than comments which are always printed in the last column, no whitespace (which would prohibit scripting)
-# - user names go to the authorized_keys file. Dangerous!
-# - there may be other, undocumented assumptions. It's probably unwise to allow shell special characters in non-comment data.
+# These regexen can be tweaked, but additionally the following assumptions
+# will be checked for any value that goes in the DB:
+#
+# - repos and domains need to be valid filepath components (x not in ['.','..'] and '/' not in x)
+# - other than comments which are always printed in the last column, no whitespace allowed (which would prohibit scripting)
+# - multiple lines not allowed (currently check for \r and \n)
+#
+# Warning: user names go to the authorized_keys file. Dangerous!
+# There may be other, undocumented assumptions. It's probably unwise to allow shell special characters in non-comment data.
 
 username_regex      = r"""[a-z][a-z0-9]{1,15}"""
 domainname_regex    = r"""[a-z][a-z0-9]{1,15}"""
 reponame_regex      = r"""[a-zA-Z][a-zA-Z0-9_-]{1,15}"""
 sshkey_algo_regex   = r"""(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)"""
 sshkey_key_regex    = r"""[a-zA-Z0-9+/]{32,8192}={0,2}"""
-usercomment_regex   = r"""[]abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
-domaincomment_regex = r"""[]abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
-repocomment_regex   = r"""[]abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
-sshkeycomment_regex = r"""[]abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
+usercomment_regex   = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
+domaincomment_regex = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
+repocomment_regex   = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
+sshkeycomment_regex = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
 
 # **********************************************************************
 # GLOBAL STATE
@@ -246,40 +256,58 @@ CREATE TABLE guest
 
 class GA_Exception(Exception):
     """base class for all gitadmin exceptions"""
-    msg = "Unknown gitadmin error"
+    msg = "UNSPECIFIED-ERROR"
+
+# This should normally not happen
 
 class GA_FSError(GA_Exception):
     """An error from the filesystem or the OS during a gitadmin operation"""
-    msg = "Filesystem or OS Error"
+    msg = "FS-ERROR"
 
-class GA_IntegrityError(GA_Exception):
+# This indicates a program logic error (or someone messed with DB or FS)
+
+class GA_InternalError(GA_Exception):
     """An operation could not be performed because a DB constraint was
-       violated, for otherwise unknown reasons"""
-    msg = "Unknown database error"
+       violated, or the FS is in inconsistent state, for otherwise unknown
+       reasons"""
+    msg = "INTERNAL-ERROR"
 
-class GA_Exists(GA_Exception):
-    """An attempt was made to create an object which already exists"""
-    msg = "Object already exists"
-
-class GA_NotFound(GA_Exception):
-    """An object reference could not be resolved"""
-    msg = "No such object"
-
-class GA_FailedDependencies(GA_Exception):
-    """An operation could not be performed because some other operation needs
-       to be performed first (like deleting all repos from a domain before the
-       domain can be deleted)"""
-    msg = "Operation not possible"
+# This indicates wrong usage (command line)
 
 class GA_Invalid(GA_Exception):
     """A command could not be parsed, or wrong number of arguments, or one or
        more arguments did not match the according regular expression"""
-    msg = "Invalid command"
+    msg = "INVALID-COMMAND"
 
-class GA_AuthError(GA_Exception):
+# This happens on more trivial failure to satisfy authorization constraints
+# (root / domain admin required)
+
+class GA_Unauthorized(GA_Exception):
     """A parsed command could not be processed due to insufficient
        authorization"""
-    msg = "Authentication failed"
+    msg = "UNAUTHORIZED"
+
+# These occurr when an operation can't satisfy DB constraints
+
+class GA_NotPossible(GA_Exception):
+    """Base class for exceptions from operations that were syntactically valid
+       and authorized, but could not meaningfully be carried out in the present
+       DB state"""
+    msg = "NOT-POSSIBLE"
+
+class GA_Exists(GA_NotPossible):
+    """An attempt was made to create an object which already exists"""
+    msg = "EXISTS"
+
+class GA_NotFound(GA_NotPossible):
+    """An object reference could not be resolved"""
+    msg = "NOT-FOUND"
+
+class GA_FailedDependencies(GA_NotPossible):
+    """An operation could not be performed because some other operation needs
+       to be performed first (like deleting all repos from a domain before the
+       domain can be deleted)"""
+    msg = "FAILED-DEPENDENCIES"
 
 # **********************************************************************
 # VARIOUS HELPER FUNCTIONS
@@ -387,6 +415,11 @@ def select(sql, args=()):
     rs = conn.execute(sql, args)
     return list(rs)
 
+def exists(sql, args=()):
+    global conn
+    rs = conn.execute(sql, args)
+    return bool(list(rs))
+
 def delete(sql, args=()):
     global conn
     try:
@@ -394,59 +427,71 @@ def delete(sql, args=()):
         rs = conn.execute("SELECT CHANGES()")
         return list(rs)[0][0]
     except sqlite3.IntegrityError as e:
-        raise GA_IntegrityError(e)
+        raise GA_InternalError(e)
 
 def insert(sql, args=()):
     global conn
     try:
         conn.execute(sql, args)
     except sqlite3.IntegrityError as e:
-        raise GA_IntegrityError("Database integrity constraint violated")
+        raise GA_InternalError("Database integrity constraint violated")
 
 # Validation
 
+def is_single_line(x):
+    """helper for need_* functions"""
+    return '\n' not in x and '\r' not in x
+
+def is_word(x):
+    """helper for need_* functions"""
+    return x.isidentifier()  # hopefully this will do
+
+def is_fs_component(x):
+    """helper for need_* functions. stronger than is_word()."""
+    return is_word(x) and x not in ['.','..'] and '/' not in x and '\\' not in x
+
 def need_valid_username(user):
-    if not exact_match(username_regex, user):
+    if not is_word(user) or not exact_match(username_regex, user):
         raise GA_Invalid("'{}' is not a valid user name".format(user))
 
 def need_valid_domainname(domain):
-    if not exact_match(domainname_regex, domain):
+    if not is_fs_component(domain) or not exact_match(domainname_regex, domain):
         raise GA_Invalid("'{}' is not a valid domain name".format(domain))
 
 def need_valid_reponame(repo):
-    if not exact_match(reponame_regex, repo):
+    if not is_fs_component(repo) or not exact_match(reponame_regex, repo):
         raise GA_Invalid("'{}' is not a valid repo name".format(repo))
 
 def need_valid_usercomment(comment):
-    if not exact_match(usercomment_regex, comment):
+    if not is_single_line or not exact_match(usercomment_regex, comment):
         raise GA_Invalid("'{}' is not a valid user comment".format(comment))
 
 def need_valid_domaincomment(comment):
-    if not exact_match(domaincomment_regex, comment):
+    if not is_single_line or not exact_match(domaincomment_regex, comment):
         raise GA_Invalid("'{}' is not a valid domain comment".format(comment))
 
 def need_valid_repocomment(comment):
-    if not exact_match(repocomment_regex, comment):
+    if not is_single_line or not exact_match(repocomment_regex, comment):
         raise GA_Invalid("'{}' is not a valid repo comment".format(comment))
 
 def need_valid_boolean(boolean):
     if boolean not in ['true', 'false']:
         raise GA_Invalid("'{}' is not a valid boolean. Need 'true' or 'false'".format(boolean))
 
+def need_no_su_nesting(args):
+    if args[0] == 'su':
+        raise GA_Invalid("nesting of 'su' command not possible")
+
 # Authorization
 
 def require_root_admin():
     if loguser is not None:
-        raise GA_AuthError("root admin privileges needed")
+        raise GA_Unauthorized("root admin privileges needed")
 
 def require_domain_admin(domain):
     adm = db_list_domain_admins(domain)
     if loguser not in map(lambda r: r[1], adm):
-        raise GA_AuthError("domain admin privileges needed")
-
-def require_not_su():
-    if running_su:
-        raise GA_AuthError("nesting of 'su' command not allowed")
+        raise GA_Unauthorized("domain admin privileges needed")
 
 # Formatting
 
@@ -506,6 +551,12 @@ def path_publicro_repo_symlink(domain, repo):
 # These functions translate between the relational view of the
 # database and the more object-oriented gitadmin view.
 #
+# Although this section looks pretty much like the available gitadmin tasks,
+# and thus somewhat redundant, the idea is that here we put only the DB
+# primitives (transitions between valid gitadmin DB states).
+#
+# Also the idea is to put here all the SQL, and nothing else, for readability.
+#
 # Instead of using a complicated ORM mapper, let's just write some ad-hoc code.
 #
 # - db_insert_* functions raise GA_Exists if the "object" already exists.
@@ -562,80 +613,92 @@ def db_list_repo_perms(domain, repo):
 def db_insert_user(user, comment):
     try:
         insert("INSERT INTO user (user, comment) VALUES (?, ?)", (user, comment))
-    except GA_IntegrityError:
+    except GA_InternalError:
         raise GA_Exists("User already exists")
 
 def db_insert_domain(domain, comment):
-    try:
-        insert("INSERT INTO domain (domain, comment) VALUES (?, ?)", (domain, comment))
-    except GA_IntegrityError:
+    if exists("SELECT 1 FROM domain WHERE domain = ?", (domain,)):
         raise GA_Exists("Domain already exists")
+    insert("INSERT INTO domain (domain, comment) VALUES (?, ?)", (domain, comment))
 
 def db_insert_repo(domain, repo, comment):
-    # assumption: domain exists
-    try:
-        insert("INSERT INTO repo (domain, repo, comment) VALUES (?, ?, ?)", (domain, repo, comment))
-    except GA_IntegrityError:
+    assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
+    if exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo)):
         raise GA_Exists("Repo already exists")
+    insert("INSERT INTO repo (domain, repo, comment) VALUES (?, ?, ?)", (domain, repo, comment))
 
 def db_insert_sshkey(user, algo, key, comment):
-    # assumption: user exists
-    try:
-        insert("INSERT INTO sshkey (user, algo, key, comment) VALUES (user, algo, key, comment)", (user, algo, key, comment))
-    except GA_IntegrityError:
-        raise GA_Exists("SSH key already exists")
+    assert exists("SELECT 1 FROM user WHERE user = ?", (user,))
+    if exists("SELECT 1 FROM sshkey WHERE key = ?", (key,)):
+        raise GA_Exists("SSH key already registered")
+    insert("INSERT INTO sshkey (user, algo, key, comment) VALUES (user, algo, key, comment)", (user, algo, key, comment))
 
 def db_delete_user(user):
+    if not exists("SELECT 1 FROM user WHERE user = ?", (user,)):
+        raise GA_NotFound("User not found")
     delete("DELETE FROM guest WHERE host = ?", (user,))
     delete("DELETE FROM sshkey WHERE user = ?", (user,))
     delete("DELETE FROM admin WHERE user = ?", (user,))
     delete("DELETE FROM perm WHERE user = ?", (user,))
-    if not delete("DELETE FROM user WHERE user = ?", (user,)):
-        raise GA_NotFound("User not found")
+    delete("DELETE FROM user WHERE user = ?", (user,))
 
 def db_delete_domain(domain):
-    try:
-        if not delete("DELETE FROM domain WHERE domain = ?", (domain,)):
-            raise GA_NotFound("Domain not found")
-    except GA_IntegrityError:
+    if not exists("SELECT 1 FROM domain WHERE domain = ?", (domain,)):
+        raise GA_NotFound("Domain not found")
+    if exists("SELECT 1 FROM repo WHERE domain = ?", (domain,)):
         raise GA_FailedDependencies("Domain not empty")
+    delete("DELETE FROM admin WHERE domain = ?", (domain,))
+    delete("DELETE FROM domain WHERE domain = ?", (domain,))
 
 def db_delete_repo(domain, repo):
+    if not exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo)):
+        raise GA_NotFound("Repo not found")
     delete("DELETE FROM publicro WHERE domain = ? AND repo = ?", (domain, repo))
     delete("DELETE FROM perm WHERE domain = ? AND repo = ?", (domain, repo))
-    if not delete("DELETE FROM repo WHERE domain = ? AND repo = ?", (domain, repo)):
-        raise GA_NotFound("Repo not found")
+    delete("DELETE FROM repo WHERE domain = ? AND repo = ?", (domain, repo))
 
 def db_delete_sshkey(user, algo, key):
-    if not delete("DELETE FROM sshkey WHERE user = ? AND algo = ? AND key = ?", (user, algo, key)):
-        raise GA_NotFound("SSH key not found")
+    # ignoring algo completely. Good idea?
+    if not exists("SELECT 1 FROM sshkey WHERE user = ? AND key = ?", (user, key)):
+        raise GA_NotFound("SSH key not found or not your key")
+    delete("DELETE FROM sshkey WHERE user = ? AND key = ?", (user, key))
 
 def db_set_admin(domain, user):
-    # assumption: domain and user exist
+    assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
+    assert exists("SELECT 1 FROM user WHERE user = ?", (user,))
     insert("INSERT OR IGNORE INTO admin (domain, user) VALUES (?, ?)", (domain, user))
 
 def db_clear_admin(domain, user):
-    # assumption: domain and user exist
+    assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
+    assert exists("SELECT 1 FROM user WHERE user = ?", (user,))
     delete("DELETE FROM admin WHERE domain = ? AND user = ?", (domain, user))
 
 def db_set_perm(domain, repo, user, perm):
-    # assumption: domain, repo and user exist. perm = R or RW.
+    assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
+    assert exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo))
+    assert exists("SELECT 1 FROM user WHERE user = ?", (user,))
+    assert perm == "R" or perm == "RW"
     insert("INSERT OR UPDATE INTO perm (domain, repo, user, perm) VALUES (?, ?, ?, ?)", (domain, repo, user, perm))
 
 def db_clear_perm(domain, repo, user):
-    # assumption: domain, repo and user exist.
+    assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
+    assert exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo))
+    assert exists("SELECT 1 FROM user WHERE user = ?", (user,))
     delete("DELETE FROM perm WHERE domain = ? AND repo = ? AND user = ?", (domain, repo, user))
 
 def db_set_publicro(domain, repo):
-    # assumption: domain and repo exist.
+    assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
+    assert exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo))
     insert("INSERT OR IGNORE INTO publicro (domain, repo) VALUES (?, ?)", (domain, repo))
 
 def db_clear_publicro(domain, repo):
-    # assumption: domain and repo exist.
+    assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
+    assert exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo))
     delete("DELETE FROM publicro (domain, repo) WHERE domain = ? AND repo = ?", (domain, repo))
 
 def db_set_host(guest, host):
-    # assumption: guest and host (both users) exist.
+    assert exists("SELECT 1 FROM user WHERE user = ?", (guest,))
+    assert exists("SELECT 1 FROM user WHERE user = ?", (host,))
     # there's no corresponding clear routine.
     insert("INSERT OR IGNORE INTO guest (guest, host) VALUES (?, ?)", (guest, host))
 
@@ -657,9 +720,11 @@ def fs_remove_domain_dir(domain):
     rmdir(path_domain_dir(domain))
 
 def fs_create_repo(domain, repo):
+    # output from git binary is leaked to the user
     checked_call("git", "init", "--bare", repo_dirpath(domain, repo))
 
 def fs_delete_repo(domain, repo):
+    # output from git binary is leaked to the user
     checked_call("rm", "-r", repo_dirpath(domain, repo))
 
 def fs_set_repocomment(domain, repo, comment):
@@ -685,19 +750,147 @@ def git_upload_pack(domain, repo):
 # GITADMIN TASKS
 # **********************************************************************
 
+# Here we implement the user-facing commands.
+#
+# Each command CMD is split into these parts:
+#
+# valid_CMD(): arguments to CMD are check for syntactical (regex) validity.
+# ask_CMD():   any missing required arguments are obtained interactively.
+# auth_CMD():  arguments are check for authorization (first DB read access)
+# task_CMD():  DB + FS transaction
+#              DB always comes first because we can't revert FS operation
+#              State will be left inconsistent when FS fails.
+#              (TODO: notify admin?)
+# 
+
+def valid_info():
+    return
+
+def valid_whoami():
+    return
+
+def valid_users():
+    return
+
+def valid_domains():
+    return
+
+def valid_perms():
+    return
+
+def valid_sshkeys():
+    return
+
+def valid_guests():
+    return
+
+def valid_add_sshkey():
+    return
+
+def valid_remove_sshkey():
+    return
+
+def valid_create_user(user, comment):
+    need_valid_username(user)
+    need_valid_usercomment(comment)
+
+def valid_delete_user(user):
+    need_valid_username(user)
+
+def valid_create_domain(domain, comment):
+    need_valid_domainname(domain)
+    need_valid_domaincomment(comment)
+
+def valid_delete_domain(domain):
+    need_valid_domainname(domain)
+
+def valid_create_repo(domain, repo, comment):
+    need_valid_domainname(domain)
+    need_valid_reponame(repo)
+    need_valid_repocomment(comment)
+
+def valid_delete_repo(domain, repo):
+    need_valid_domainname(domain)
+    need_valid_reponame(repo)
+
+def valid_set_public(domain, repo, public):
+    need_valid_domainname(domain)
+    need_valid_reponame(repo)
+    need_valid_boolean(public)
+
+def valid_su(user, *args):
+    need_valid_username(user)
+    need_no_su_nesting(args)
+
+#
+
+def auth_info():
+    return
+
+def auth_whoami():
+    return
+
+def auth_users():
+    return
+
+def auth_domains():
+    return
+
+def auth_perms():
+    return
+
+def auth_sshkeys():
+    return
+
+def auth_guests():
+    return
+
+def auth_add_sshkey():
+    return
+
+def auth_remove_sshkey():
+    return
+
+def auth_create_user(user, comment):
+    require_root_admin()
+
+def auth_delete_user(user):
+    require_root_admin()
+
+def auth_create_domain(domain, comment):
+    require_root_admin()
+
+def auth_delete_domain(domain):
+    require_root_admin()
+
+def auth_create_repo(domain, repo, comment):
+    require_domain_admin(domain)
+
+def auth_delete_repo(domain, repo):
+    require_domain_admin(domain)
+
+def auth_set_perm(domain, repo, user, perm):
+    require_domain_admin(domain)
+
+def auth_set_public(domain, repo, public):
+    require_domain_admin(domain)
+
+def auth_su(user, *args):
+    require_root_admin()
+
+#
+
 def task_info():
-    return [commands_listing]
+    return
 
 def task_whoami():
-    return [(loguser or "(root)") + '\n']
+    return
 
 def task_users():
-    t = db_list_users()
-    return t
+    return db_list_users()
 
 def task_domains():
-    t = db_list_user_domains(loguser)
-    return t
+    return db_list_user_domains(loguser)
 
 def task_repos(domain):
     t = db_list_domain_repos(domain)
@@ -774,8 +967,8 @@ def task_su(user, *args):
     global loguser
     global running_su
 
-    assert(loguser is None)
-    assert(not running_su)
+    assert loguser is None
+    assert not running_su
 
     loguser = user
     running_su = True
@@ -784,129 +977,6 @@ def task_su(user, *args):
     finally:
         loguser = None
         running_su = False
-
-# **********************************************************************
-# COMMAND VALIDATION AND AUTHENTICATION
-# **********************************************************************
-
-# valid_* functions make sure commands are syntactically valid
-# If not, GA_Invalid is raised
-
-def valid_info():
-    return
-
-def valid_whoami():
-    return
-
-def valid_users():
-    return
-
-def valid_domains():
-    return
-
-def valid_perms():
-    return
-
-def valid_sshkeys():
-    return
-
-def valid_guests():
-    return
-
-def valid_add_sshkey():
-    return
-
-def valid_remove_sshkey():
-    return
-
-def valid_create_user(user, comment):
-    need_valid_username(user)
-    need_valid_usercomment(comment)
-
-def valid_delete_user(user):
-    need_valid_username(user)
-
-def valid_create_domain(domain, comment):
-    need_valid_domainname(domain)
-    need_valid_domaincomment(comment)
-
-def valid_delete_domain(domain):
-    need_valid_domainname(domain)
-
-def valid_create_repo(domain, repo, comment):
-    need_valid_domainname(domain)
-    need_valid_reponame(repo)
-    need_valid_repocomment(comment)
-
-def valid_delete_repo(domain, repo):
-    need_valid_domainname(domain)
-    need_valid_reponame(repo)
-
-def valid_set_public(domain, repo, public):
-    need_valid_domainname(domain)
-    need_valid_reponame(repo)
-    need_valid_boolean(public)
-
-def valid_su(user, *args):
-    need_valid_username(user)
-
-# auth_* functions make sure commands are authorized
-# If not, GA_AuthError is raised
-
-def auth_info():
-    return
-
-def auth_whoami():
-    return
-
-def auth_users():
-    return
-
-def auth_domains():
-    return
-
-def auth_perms():
-    return
-
-def auth_sshkeys():
-    return
-
-def auth_guests():
-    return
-
-def auth_add_sshkey():
-    return
-
-def auth_remove_sshkey():
-    return
-
-def auth_create_user(user, comment):
-    require_root_admin()
-
-def auth_delete_user(user):
-    require_root_admin()
-
-def auth_create_domain(domain, comment):
-    require_root_admin()
-
-def auth_delete_domain(domain):
-    require_root_admin()
-
-def auth_create_repo(domain, repo, comment):
-    require_domain_admin(domain)
-
-def auth_delete_repo(domain, repo):
-    require_domain_admin(domain)
-
-def auth_set_perm(domain, repo, user, perm):
-    require_domain_admin(domain)
-
-def auth_set_public(domain, repo, public):
-    require_domain_admin(domain)
-
-def auth_su(user, *args):
-    require_root_admin()
-    require_not_su()
 
 # **********************************************************************
 # COMMAND EXECUTION
@@ -930,7 +1000,7 @@ def exec_cmd_array(user, args):
     valid_spec = inspect.getargspec(valid)
     task_spec  = inspect.getargspec(task)
 
-    assert(auth_spec == valid_spec == task_spec)
+    assert auth_spec == valid_spec == task_spec
 
     if ((task_spec[1] is None and len(args) - 1 != len(task_spec[0])) or
         (task_spec[1] is not None and len(args) - 1 < len(task_spec[0]))):
@@ -939,6 +1009,7 @@ def exec_cmd_array(user, args):
     # running_su indicates whether this function is called from task_su(). If it
     # is set, we don't call the transaction functions since DB transactions
     # can't be nested.
+
     loguser = user
     valid(*args[1:])
     try:
@@ -1076,6 +1147,8 @@ def invoke_exec_cmdarray(user, cmd_array):
 def invoke_exec_cmdstring(user, cmd_string):
     with_db(exec_cmd_array, user, split_cmd_string(cmd_string))
 
+def invoke_exec_sshoriginalcommand(user, ssh_original_command):
+
 def invoke_shell(user):
     if is_stdin_tty and is_stderr_tty:
         shell = GitAdminShell(user)
@@ -1133,7 +1206,7 @@ def gitadmin(argv, ssh_original_command=None):
     elif cmd_string is not None:
         invoke_exec_cmdstring(req_user, cmd_string)
     elif ssh_original_command is not None:
-        invoke_exec_cmdstring(req_user, ssh_original_command)
+        invoke_exec_sshoriginalcommand(req_user, ssh_original_command)
     else:
         invoke_shell(req_user)
 
