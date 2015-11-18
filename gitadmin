@@ -17,9 +17,10 @@ is_stdin_tty  = os.isatty(sys.stdin.fileno())
 is_stdout_tty = os.isatty(sys.stdout.fileno())
 is_stderr_tty = os.isatty(sys.stderr.fileno())
 
-# **********************************************************************
+
+# *****************************************************************************
 # CONFIG
-# **********************************************************************
+# *****************************************************************************
 
 config_basedir = 'gitadmin-basedir'
 
@@ -47,9 +48,10 @@ domaindesc_regex  = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
 repodesc_regex    = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
 sshkeydesc_regex  = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
 
-# **********************************************************************
+
+# *****************************************************************************
 # GLOBAL STATE
-# **********************************************************************
+# *****************************************************************************
 
 # (effective) gitadmin user
 loguser = None
@@ -57,9 +59,10 @@ loguser = None
 # DB connection
 conn = None
 
-# **********************************************************************
+
+# *****************************************************************************
 # STRINGS
-# **********************************************************************
+# *****************************************************************************
 
 help_short = r"""
 gitadmin invocation:
@@ -246,24 +249,27 @@ CREATE TABLE guest
 );
 """
 
-# **********************************************************************
+
+# *****************************************************************************
 # Exceptions
-# **********************************************************************
+# *****************************************************************************
 
 #
-# Custom exceptions modeling gitadmin semantics. All runtime exceptions that the
-# author thought of and cared about are immediately converted to one of these
-# custom exceptions.
+# Custom exceptions modeling gitadmin semantics. All runtime exceptions that
+# the author thought of and cared about are immediately converted to one of
+# these custom exceptions.
 #
 # All other exceptions are bugs.
 #
 
 class GA_FSError(Exception):
-    """A kind-of unexpected error from the filesystem or the OS during a gitadmin operation"""
+    """A kind-of unexpected error from the filesystem or the OS during a
+       gitadmin operation"""
     msg = "FS-ERROR"
 
 class GA_DBError(Exception):
-    """A kind-of unexpected error from the database or the OS during a gitadmin operation"""
+    """A kind-of unexpected error from the database or the OS during a gitadmin
+       operation"""
     msg = "DB-ERROR"
 
 class GA_CLIError(Exception):
@@ -294,20 +300,21 @@ class GA_FailedDependencies(Exception):
        domain can be deleted)"""
     msg = "FAILED-DEPENDENCIES"
 
+
 # **********************************************************************
 # VARIOUS HELPER FUNCTIONS
 # **********************************************************************
 
-# regex matching
+# regex matching wrapper
 
 def exact_match(regex, value):
     return re.match(r'^' + regex + r'$', value) is not None
 
-# File system.
+# File system wrapper
 # 
-# Let's merge all error conditions into GA_FSError. Our semantics is that
-# simple: When an FS operation is not successful, that's unexpected. We are in a
-# bad state and bail out.
+# Collapse all error conditions into GA_FSError. Semantics are that simple:
+# When an FS operation is not successful, that's unexpected. We are in a bad
+# state and bail out.
 
 def mkdir(dirpath):
     try:
@@ -340,13 +347,12 @@ def write_file(filepath, rawbytes):
     except (OSError, IOError) as e:
         raise GA_FSError("Failed to write file: {}".format(e))
 
-# Database.
+# Database wrapper
 #
-# Let's paper over the python sqlite3 API a bit. It's hardly usable.
-#
-# As with FS, any DB errors are unexpected conditions (like I/O errors, messed
-# up database, or integrity errors resulting from program logic bugs) and simply
-# collapsed into GA_DBError. When one occurrs the program is exited.
+# Similarly to FS, any DB errors (like I/O errors, messed up database, or
+# integrity errors resulting from program logic bugs) are unexpected. When one
+# occurrs, raise GA_DBError. The other parts of the program won't try to handle
+# this condition.
 
 def create_db():
     if os.path.exists(path_database()):
@@ -369,7 +375,7 @@ def connect_db():
         conn.execute("PRAGMA FOREIGN_KEYS = ON")
         rows = conn.execute("SELECT schema_version FROM gitadmin_metadata")
         if tuple(rows) != ((sql_schema_version,),):
-            raise GA_DBError("Wrong Database schema version. Probably gitadmin was upgraded and the DB needs migration")
+            raise GA_DBError("Error opening Database: Wrong Database schema version. Probably gitadmin was upgraded and the DB needs migration")
     except sqlite3.Error as e:
         raise GA_DBError("Error opening Database: {}".format(e))
 
@@ -402,24 +408,6 @@ def abort_db_transaction():
     except sqlite3.Error as e:
         raise GA_DBError("Error while aborting DB transaction: {}".format(e))
 
-def with_db(fun, *args):
-    connect_db()
-    try:
-        return fun(*args)
-    finally:
-        disconnect_db()
-
-def run_transaction(fun, *args):
-    begin_db_transaction()
-    try:
-        r = fun(*args)
-    except:
-        abort_db_transaction()
-        raise
-    else:
-        end_db_transaction()
-        return r
-
 def select(sql, args=()):
     global conn
     try:
@@ -438,15 +426,42 @@ def exists(sql, args=()):
 
 def delete(sql, args=()):
     global conn
-    conn.execute(sql, args)
-    rs = conn.execute("SELECT CHANGES()")
-    return list(rs)[0][0]
+    try:
+        conn.execute(sql, args)
+        rs = conn.execute("SELECT CHANGES()")
+        return list(rs)[0][0]
+    except sqlite3.Error as e:
+        raise GA_DBError("Error while executing DB command: {}".format(e))
 
 def insert(sql, args=()):
     global conn
-    conn.execute(sql, args)
+    try:
+        conn.execute(sql, args)
+    except sqlite3.Error as e:
+        raise GA_DBError("Error while executing DB command: {}".format(e))
 
-# Argument validation
+def with_db(fun, *args):
+    connect_db()
+    try:
+        return fun(*args)
+    finally:
+        disconnect_db()
+
+def run_transaction(fun, *args):
+    begin_db_transaction()
+    try:
+        r = fun(*args)
+    except:
+        abort_db_transaction()
+        raise
+    else:
+        end_db_transaction()
+        return r
+
+
+# *****************************************************************************
+# USER INPUT VALIDATION PRIMITIVES
+# *****************************************************************************
 
 def is_single_line(x):
     """helper for need_* functions"""
@@ -457,8 +472,10 @@ def is_word(x):
     return x.isidentifier()  # hope this will do
 
 def is_fs_component(x):
-    """helper for need_* functions. stronger than is_word()."""
-    return is_word(x) and x not in ['.','..'] and '/' not in x and '\\' not in x
+    """helper for need_* functions."""
+    return x.isidentifier() and x not in ['.','..'] and '/' not in x and '\\' not in x
+
+#
 
 def need_valid_username(user):
     if not is_word(user) or not exact_match(username_regex, user):
@@ -516,7 +533,50 @@ def need_valid_repospec(path):
             return d, r
     raise GA_Invalid("Could not parse {} as a valid repospec (something like 'joe/project')".format(path))
 
-# Authorization
+def need_cmd_array(cmd_string):
+    #
+    # Should shell-style splitting really be reimplemented?
+    #
+    # Maybe we could get along with just whitespace splitting (comments as the
+    # only thing where whitespace is allowed are always in the last column)
+    #
+    # The shlex module could be used as well. But shlex's supported syntax is
+    # even more complicated than the one implemented below.
+    #
+    cmd = ()
+    word = ""
+    started = False
+    quoted = False
+    escaped = False
+    for char in cmd_string:
+        if escaped:
+            word += char
+            escaped = False
+        elif char == '\\':
+            escaped = True
+            started = True
+        elif char == '"':
+            quoted = not quoted
+            started = True
+        elif quoted or char not in ' \t\n\r':
+            word += char
+            started = True
+        elif started:
+            cmd = cmd + (word,)
+            word = ''
+            started = False
+    if quoted:
+        raise GA_Invalid("Unterminated quote: {}".format(cmd_string))
+    if escaped:
+        raise GA_Invalid("Trailing escape character: {}".format(cmd_string))
+    if started:
+        cmd = cmd + (word,)
+    return cmd
+
+
+# **********************************************************************
+# AUTHORIZATION PRIMITIVES
+# **********************************************************************
 
 def require_root_admin():
     if loguser is not None:
@@ -543,7 +603,10 @@ def require_host_of_guest(guest):
     if guest not in guests:
         raise GA_Unauthorized("not one of your guests")
 
-# Formatting
+
+# **********************************************************************
+# FORMATTING
+# **********************************************************************
 
 def format_authorized_keys(rs):
     return ''.join('command="gitadmin -u {}" {} {} {}\n'.format(user, algo, key, desc) for user, algo, key, desc in rs)
@@ -557,6 +620,7 @@ def format_table(rs):
     ls = [max(ls) for ls in lss]
     xs = [[str(c).ljust(l) for c, l in list(zip(r, ls))[:-1]] + [r[-1]] for r in rs]
     return ''.join('\t'.join(r) + '\n' for r in rs)
+
 
 # **********************************************************************
 # FILE PATHS
@@ -591,6 +655,7 @@ def path_publicro_domain_dir(domain):
 
 def path_publicro_repo_symlink(domain, repo):
     return os.path.join(config_basedir, 'publicro', domain, repo)
+
 
 # **********************************************************************
 # FS LOGIC
@@ -628,6 +693,7 @@ def fs_set_publicro_symlink(domain, repo):
 def fs_clear_publicro_symlink(domain, repo):
     unlink(path_publicro_repo_symlink(domain, repo))
 
+
 # **********************************************************************
 # DB LOGIC
 # **********************************************************************
@@ -657,10 +723,10 @@ def fs_clear_publicro_symlink(domain, repo):
 #    Setters for these. (The last two are currently missing here)
 #
 # 3. Look at the remaining relations as the beautiful simple data (often
-#    vectors) which in OOP you would store with objects where they clearly don't
-#    belong (because they could be stored with other objects just as well).
-#    Think what methods you would install on the objects in OOP for massaging
-#    this data, and provide corresponding DB functions.
+#    vectors) which in OOP you would store with objects where they clearly
+#    don't belong (because they could be stored with other objects just as
+#    well).  Think what methods you would install on the objects in OOP for
+#    massaging this data, and provide corresponding DB functions.
 #
 # What's there below:
 #
@@ -818,6 +884,7 @@ def db_set_host(guest, host):
     # there's no corresponding clear routine.
     insert("INSERT OR IGNORE INTO guest (guest, host) VALUES (?, ?)", (guest, host))
 
+
 # **********************************************************************
 # GIT CALLS
 # **********************************************************************
@@ -827,6 +894,7 @@ def git_upload_pack(domain, repo):
 
 def git_receive_pack(domain, repo):
     checked_call("git-receive-pack", "{}/{}".format(domain, repo))
+
 
 # **********************************************************************
 # GITADMIN TASKS
@@ -1044,6 +1112,7 @@ def task_set_public(domain, repo, public):
     else:
         fs_clear_publicro_symlink(domain, repo)
 
+
 # **********************************************************************
 # COMMAND EXECUTION
 # **********************************************************************
@@ -1106,49 +1175,10 @@ def exec_cmd_array(user, args):
     finally:
         loguser = None
 
-# **********************************************************************
-# COMMAND-LINE SPLITTING AND INTERACTIVE SHELL
-# **********************************************************************
 
-def split_cmd_string(cmd_string):
-    #
-    # Should shell-style splitting really be reimplemented?
-    #
-    # Maybe we could get along with just whitespace splitting (comments as the
-    # only thing where whitespace is allowed are always in the last column)
-    #
-    # The shlex module could be used as well. But shlex's supported syntax is
-    # even more complicated than the one implemented below.
-    #
-    cmd = ()
-    word = ""
-    started = False
-    quoted = False
-    escaped = False
-    for char in cmd_string:
-        if escaped:
-            word += char
-            escaped = False
-        elif char == '\\':
-            escaped = True
-            started = True
-        elif char == '"':
-            quoted = not quoted
-            started = True
-        elif quoted or char not in ' \t\n\r':
-            word += char
-            started = True
-        elif started:
-            cmd = cmd + (word,)
-            word = ''
-            started = False
-    if quoted:
-        raise GA_Invalid("Unterminated quote: {}".format(cmd_string))
-    if escaped:
-        raise GA_Invalid("Trailing escape character: {}".format(cmd_string))
-    if started:
-        cmd = cmd + (word,)
-    return cmd
+# **********************************************************************
+# INTERACTIVE SHELL
+# **********************************************************************
 
 class GitAdminShell(cmd.Cmd):
     # Sorry to say it, but cmd.Cmd is not a good API
@@ -1185,7 +1215,7 @@ class GitAdminShell(cmd.Cmd):
             # indicate that the interpreter should be ended
             return True
         else:
-            exec_cmd_array(self.user, split_cmd_string(line))
+            exec_cmd_array(self.user, need_cmd_array(line))
 
     # We must override this method to be able to handle exceptions from
     # executed commands
@@ -1225,6 +1255,10 @@ delattr(cmd.Cmd, 'do_help')
 # MAIN
 # **********************************************************************
 
+def wrong_usage():
+    print(help_short, file=sys.stderr)
+    sys.exit(1)
+
 def invoke_help():
     print(long_usage)
 
@@ -1235,7 +1269,7 @@ def invoke_with_cmdarray(user, cmd_array):
     with_db(exec_cmd_array, user, cmd_array)
 
 def invoke_with_cmdstring(user, cmd_string):
-    with_db(exec_cmd_array, user, split_cmd_string(cmd_string))
+    with_db(exec_cmd_array, user, need_cmd_array(cmd_string))
 
 def invoke_with_sshoriginalcommand(user, ssh_original_command):
     ws = ssh_original_command.split(None, 1)
@@ -1244,7 +1278,7 @@ def invoke_with_sshoriginalcommand(user, ssh_original_command):
     elif len(ws) == 2 and ws[0] == 'git-receive-pack':
         with_db(exec_git_receive_pack, ws[1])
     elif len(ws) == 2 and ws[0] == 'gitadmin':
-        with_db(exec_cmd_array, split_cmd_string(ws[1]))
+        with_db(exec_cmd_array, need_cmd_array(ws[1]))
     else:
         raise GA_Invalid("Invalid invocation (SSH_ORIGINAL_COMMAND): need \"git-(upload|receive)-pack 'DOMAIN/REPO'\" or \"gitadmin <GITADMIN-CMD>\"", file=sys.stderr)
 
@@ -1254,11 +1288,7 @@ def invoke_shell(user):
         with_db(shell.cmdloop)
     else:
         for line in sys.stdin:
-            with_db(exec_cmd_array, user, split_cmd_string(line))
-
-def wrong_usage():
-    print(help_short, file=sys.stderr)
-    sys.exit(1)
+            with_db(exec_cmd_array, user, need_cmd_array(line))
 
 def gitadmin(argv, ssh_original_command=None):
     argv = tuple(argv[1:])
