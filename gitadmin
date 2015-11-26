@@ -655,18 +655,16 @@ def need_not_root():
 # **********************************************************************
 
 def require_regular_user():
-    if loguser is None:
-        return
-    guests = db_list_own_guests()
-    if loguser in guests:
-        raise GA_Unauthorized("you're not a regular user")
+    if loguser is not None:
+        guests = db_list_own_guests()
+        if loguser in guests:
+            raise GA_Unauthorized("you're not a regular user")
 
 def require_host_of_guest(guest):
     if loguser is not None:
-        return
-    guests = db_list_user_guests(loguser)
-    if guest not in guests:
-        raise GA_Unauthorized("that's not one of your guests")
+        guests = db_list_user_guests(loguser)
+        if guest not in guests:
+            raise GA_Unauthorized("that's not one of your guests")
 
 def require_domain_exists(domain):
     dom = db_list_domains()
@@ -785,26 +783,6 @@ def fs_clear_publicro_symlink(domain, repo):
 # Also we want to put here all the SQL, and nothing else, for readability.
 #
 # Instead of using a complicated ORM mapper, we write some ad-hoc code.
-#
-# Note: I found ORM to be straightforward (in this narrow-scoped program).
-# I mostly went Relations -> Entity-Relatinship -> Objects:
-#
-# 0. Create the DB schema first. OO is broken. If you can't make a DB schema,
-#    you don't know what model you want logically (or you want too much).
-#
-# 1. Work out what relations easily map to (the top-level) of objects from the
-#    OO world. Here we have user, domain and possibly repo and possibly sshkey.
-#
-# 2. Provide Constructors (db_insert_*), Destructors (db_delete_*), Getters and
-#    Setters for these.
-#
-# 3. Look at the remaining relations as the beautiful simple data (often
-#    vectors) which in OOP you would store with objects where they clearly
-#    don't belong (because they could be stored with other objects just as
-#    well).  Think what methods you would install on the objects in OOP for
-#    massaging this data, and provide corresponding DB functions.
-#
-# What's there below:
 #
 # - All functions assert that the references given as function arguments exist
 #   (except where they are meant to be "created")
@@ -987,6 +965,7 @@ def db_clear_host(host, guest):
 # GITADMIN TASKS
 # **********************************************************************
 
+#
 # Here we implement the user-facing commands.
 #
 # The implementation for each command CMD is split into these parts:
