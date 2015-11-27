@@ -18,9 +18,8 @@ is_stdin_tty  = os.isatty(sys.stdin.fileno())
 is_stdout_tty = os.isatty(sys.stdout.fileno())
 is_stderr_tty = os.isatty(sys.stderr.fileno())
 
-
 # *****************************************************************************
-# CONFIG
+# Config
 # *****************************************************************************
 
 config_basedir = 'gitadmin-basedir'
@@ -39,9 +38,9 @@ config_basedir = 'gitadmin-basedir'
 # shell special characters in non-comment data.
 #
 # as per the python3 documentation, character classes ([a-z] etc) are ASCII
-username_regex        = r"""[a-z][a-z0-9]{0,15}"""
-domainname_regex      = r"""[a-z][a-z0-9]{0,15}"""
-reponame_regex        = r"""[a-zA-Z][a-zA-Z0-9_-]{0,15}"""
+username_regex        = r"""[a-z][a-z0-9]{0,14}"""
+domainname_regex      = r"""[a-z][a-z0-9]{0,14}"""
+reponame_regex        = r"""[a-zA-Z][a-zA-Z0-9_-]{0,14}"""
 sshkey_keytype_regex  = r"""(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)"""
 sshkey_key_regex      = r"""[a-zA-Z0-9+/]{32,8192}={0,2}"""
 sshkey_comment_regex  = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
@@ -49,9 +48,8 @@ userdesc_regex        = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"
 domaindesc_regex      = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
 repodesc_regex        = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"""
 
-
 # *****************************************************************************
-# GLOBAL STATE
+# Global state
 # *****************************************************************************
 
 # logged in user
@@ -60,9 +58,8 @@ loguser = None
 # database connection
 conn = None
 
-
 # *****************************************************************************
-# STRINGS
+# Strings
 # *****************************************************************************
 
 help_short = r"""
@@ -73,9 +70,9 @@ gitadmin invocation:
     gitadmin [-u USER] ARGS...
     gitadmin [-u USER] -c CMD
     gitadmin [-u USER]
-    SSH_ORIGINAL_CMD="git-receive-pack DOMAIN/REPO" gitadmin [-u USER]
-    SSH_ORIGINAL_CMD="git-upload-pack DOMAIN/REPO" gitadmin [-u USER]
-    SSH_ORIGINAL_CMD="gitadmin ARGS..." gitadmin [-u USER]
+    SSH_ORIGINAL_COMMAND="git-receive-pack DOMAIN/REPO" gitadmin [-u USER]
+    SSH_ORIGINAL_COMMAND="git-upload-pack DOMAIN/REPO" gitadmin [-u USER]
+    SSH_ORIGINAL_COMMAND="gitadmin CMD" gitadmin [-u USER]
 """
 
 help_long = help_short + r"""
@@ -130,35 +127,40 @@ gitadmin [-u USER]
         gitadmin> set_perm john testrepo john rw
         gitadmin> set_perm john testrepo jane r
 
-    (The `gitadmin> ' prompts are printed by gitadmin when connected to a
-    terminal to indicate that it is waiting for the next command).
+    (The `gitadmin> ' prompts are printed by gitadmin when connected
+    to a terminal to indicate that it is waiting for the next command).
 
-SSH_ORIGINAL_CMD="git-upload-pack DOMAIN/REPO" gitadmin [-u USER]
-SSH_ORIGINAL_CMD="git-receive-pack DOMAIN/REPO" gitadmin [-u USER]
+SSH_ORIGINAL_COMMAND="git-upload-pack DOMAIN/REPO" gitadmin [-u USER]
+SSH_ORIGINAL_COMMAND="git-receive-pack DOMAIN/REPO" gitadmin [-u USER]
 
-    Execute the git command given in SSH_ORIGINAL_CMD (which is
-    technically sh syntax; it is currently parsed using the python
-    shlex module). The repo DOMAIN/REPO must exist in the database. If
-    USER is given, this user must exist in the database and have read
-    (git-upload-pack) or write (git-receive-pack) permission for the repo.
-    This is used to make git over SSH work, with gitadmin as a transparent
-    authentication and authorization layer.
-    The idea is that the system administrator sets up a `gitadmin' system
-    user, and configures the `authorized_keys' file which is maintained
-    by gitadmin as the SshAuthorizedKeysFile for that system user in the
-    SSH server configuration.
+    Execute the git command given in the SSH_ORIGINAL_COMMAND
+    environment variable (which is technically sh syntax; it is
+    currently parsed using the python shlex module). The repo
+    DOMAIN/REPO must exist in the database. If USER is given, this
+    user must exist in the database and have read (git-upload-pack)
+    or write (git-receive-pack) permission for the repo.
+    This is used to make git over SSH work, with gitadmin as a
+    transparent authentication and authorization layer. The idea is
+    that the system administrator sets up a `gitadmin' system user,
+    and configures the `authorized_keys' file which is maintained
+    by gitadmin as the `SshAuthorizedKeysFile' for that system user
+    in the SSH server configuration. Since the `authorized_keys' file
+    has all lines prefixed with `command="gitadmin -u USER"', when an
+    ssh client connects and requests to run a command instead of an
+    interactive shell, sshd will store the command originally sent by
+    the client in SSH_ORIGINAL_COMMAND, and run `gitadmin -u USER'.
 
-SSH_ORIGINAL_CMD="gitadmin ARGS..." gitadmin [-u USER]
+SSH_ORIGINAL_COMMAND="gitadmin CMD" gitadmin [-u USER]
 
-    Like above, but run ARGS... which must be a gitadmin command.
+    Like above, but run CMD which must be a gitadmin command.
     If USER is given, the command is run as that gitadmin user.
     This feature makes gitadmin commands conveniently accessible over
     SSH just like shell commands in regular SSH sessions:
 
-        $ ssh git@HOST 'gitadmin ARGS...'
+        $ ssh git@HOST 'gitadmin CMD'
 
-    Like above, the command string is parsed using the python shlex module.
-    Thus, it's slightly different from
+    Like above, the command string is parsed using the python shlex
+    module. Thus, it's slightly different from
 
         $ echo 'ARGS...' | ssh -T git@HOST
 
@@ -333,7 +335,7 @@ class GA_NotFound(GA_Exception):
 
 class GA_Exists(GA_Exception):
     """An attempt was made to create an object which already exists"""
-    code = "EXISTS"
+    errcode = "EXISTS"
 
 class GA_FailedDependencies(GA_Exception):
     """An operation could not be performed because some other operation needs
@@ -343,7 +345,7 @@ class GA_FailedDependencies(GA_Exception):
 
 
 # **********************************************************************
-# VARIOUS HELPER FUNCTIONS
+# Helper functions
 # **********************************************************************
 
 # regex matching wrapper
@@ -528,162 +530,8 @@ def run_transaction(fun, *args):
         end_db_transaction()
         return r
 
-
-# *****************************************************************************
-# USER INPUT VALIDATION PRIMITIVES
-# *****************************************************************************
-
-def is_single_line(x):
-    """helper for need_* functions"""
-    return '\n' not in x and '\r' not in x
-
-def is_word(x):
-    """helper for need_* functions"""
-    return len(x.split()) <= 1  # hope this will do
-
-def is_fs_component(x):
-    """helper for need_* functions."""
-    return len(x.split()) <= 1 and x not in ['.','..'] and '/' not in x and '\\' not in x
-
-#
-
-def need_valid_username(user):
-    if not is_word(user) or not exact_match(username_regex, user):
-        raise GA_Invalid("'{}' is not a valid user name".format(user))
-
-def need_valid_guestname(user):
-    if not user.startswith('guest-'):
-        raise GA_Invalid("'{}' is not a valid guest user name (must start with guest-)".format(user))
-    if not is_word(user) or not exact_match(r'guest-' + username_regex, user):
-        raise GA_Invalid("'{}' is not a valid guest user name".format(user))
-
-def need_valid_domainname(domain):
-    if not is_fs_component(domain) or not exact_match(domainname_regex, domain):
-        raise GA_Invalid("'{}' is not a valid domain name".format(domain))
-
-def need_valid_reponame(repo):
-    if not is_fs_component(repo) or not exact_match(reponame_regex, repo):
-        raise GA_Invalid("'{}' is not a valid repo name".format(repo))
-
-def need_valid_userdesc(desc):
-    if not is_single_line(desc) or not exact_match(userdesc_regex, desc):
-        raise GA_Invalid("'{}' is not a valid user desc".format(desc))
-
-def need_valid_domaindesc(desc):
-    if not is_single_line(desc) or not exact_match(domaindesc_regex, desc):
-        raise GA_Invalid("'{}' is not a valid domain desc".format(desc))
-
-def need_valid_repodesc(desc):
-    if not is_single_line(desc) or not exact_match(repodesc_regex, desc):
-        raise GA_Invalid("'{}' is not a valid repo desc".format(desc))
-
-def need_valid_sshkey_keytype(keytype):
-    if not is_word(keytype) or not exact_match(sshkey_keytype_regex, keytype):
-        raise GA_Invalid("'{}' is not a valid sshkey keytype".format(keytype))
-
-def need_valid_sshkey_key(key):
-    if not is_word(key) or not exact_match(sshkey_key_regex, key):
-        raise GA_Invalid("'{}' is not valid (base64-encoded) ssh key".format(key))
-
-def need_valid_sshkey_comment(comment):
-    if not is_single_line(comment) or not exact_match(sshkey_comment_regex, comment):
-        raise GA_Invalid("'{}' is not a valid sshkey comment".format(comment))
-
-def need_valid_boolean(boolean):
-    if boolean not in ['true', 'false']:
-        raise GA_Invalid("'{}' is not a valid boolean. Need 'true' or 'false'".format(boolean))
-
-def need_valid_perm(perm):
-    if perm not in ['none','r','rw']:
-        raise GA_Invalid("'{}' is not a valid permission mode. Possible: none, r, rw".format(perm))
-
-def need_valid_repospec(word):
-    ws = rest.split('/')
-    if len(ws) != 2:
-        GA_Invalid("invalid repo path: {}".format(rest))
-    domain, repo = ws
-    need_valid_domainname(domain)
-    need_valid_reponame(repo)
-    return domain, repo
-
-def need_cmd_array(cmd_string):
-    #
-    # Should shell-style splitting really be reimplemented?
-    #
-    # Maybe we could get along with just whitespace splitting (comments as the
-    # only thing where whitespace is allowed are always in the last column)
-    #
-    # The shlex module could be used as well. But shlex's supported syntax is
-    # even more complicated than the one implemented below.
-    #
-    cmd = ()
-    word = ""
-    started = False
-    quoted = False
-    escaped = False
-    for char in cmd_string:
-        if escaped:
-            word += char
-            escaped = False
-        elif char == '\\':
-            escaped = True
-            started = True
-        elif char == '"':
-            quoted = not quoted
-            started = True
-        elif quoted or char not in ' \t\n\r':
-            word += char
-            started = True
-        elif started:
-            cmd = cmd + (word,)
-            word = ''
-            started = False
-    if quoted:
-        raise GA_Invalid("Unterminated quote: {}".format(cmd_string))
-    if escaped:
-        raise GA_Invalid("Trailing escape character: {}".format(cmd_string))
-    if started:
-        cmd = cmd + (word,)
-    return cmd
-
-def need_not_root():
-    if loguser is None:
-        raise GA_Invalid("You are root admin; this makes no sense")
-
 # **********************************************************************
-# AUTHORIZATION PRIMITIVES
-# **********************************************************************
-
-def require_regular_user():
-    if loguser is not None:
-        guests = db_list_own_guests()
-        if loguser in guests:
-            raise GA_Unauthorized("you're not a regular user")
-
-def require_host_of_guest(guest):
-    if loguser is not None:
-        guests = db_list_user_guests(loguser)
-        if guest not in guests:
-            raise GA_Unauthorized("that's not one of your guests")
-
-def require_domain_exists(domain):
-    dom = db_list_domains()
-    if domain not in map(lambda r: r[0], dom):
-        raise GA_Unauthorized("no such domain")
-
-def require_domain_admin(domain):
-    if loguser is not None:
-        adm = db_list_domain_admins(domain)
-        if loguser not in map(lambda r: r[1], adm):
-            raise GA_Unauthorized("domain admin privileges needed")
-
-def require_root_admin():
-    if loguser is not None:
-        raise GA_Unauthorized("root admin privileges needed")
-
-
-# **********************************************************************
-# FORMATTING
+# Formatting
 # **********************************************************************
 
 def format_authorized_keys(rs):
@@ -699,9 +547,8 @@ def format_table(rs):
     xs = [[str(c).ljust(l) for c, l in tuple(zip(r, ls))[:-1]] + [r[-1]] for r in rs]
     return ''.join('\t'.join(r) + '\n' for r in rs)
 
-
 # **********************************************************************
-# FILE PATHS
+# File paths
 # **********************************************************************
 
 def path_base_dir():
@@ -734,9 +581,8 @@ def path_publicro_domain_dir(domain):
 def path_publicro_repo_symlink(domain, repo):
     return os.path.join(config_basedir, 'publicro', domain, repo)
 
-
 # **********************************************************************
-# FS LOGIC
+# File system logic
 # **********************************************************************
 
 def fs_initialize():
@@ -767,9 +613,8 @@ def fs_set_publicro_symlink(domain, repo):
 def fs_clear_publicro_symlink(domain, repo):
     unlink(path_publicro_repo_symlink(domain, repo))
 
-
 # **********************************************************************
-# DB LOGIC
+# Database logic
 # **********************************************************************
 
 #
@@ -893,7 +738,7 @@ def db_delete_repo(domain, repo):
     delete("DELETE FROM repo WHERE domain = ? AND repo = ?", (domain, repo))
 
 def db_delete_sshkey(user, keytype, key):
-    # ignoring keytype completely. Good idea?
+    # (ignoring keytype)
     if not exists("SELECT 1 FROM sshkey WHERE user = ? AND key = ?", (user, key)):
         raise GA_NotFound("SSH key not found or not your key")
     delete("DELETE FROM sshkey WHERE user = ? AND key = ?", (user, key))
@@ -942,7 +787,8 @@ def db_set_publicro(domain, repo):
     assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
     if not exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo)):
         raise GA_NotFound("No such repo: {} {}".format(domain, repo))
-    insert("INSERT OR IGNORE INTO publicro (domain, repo) VALUES (?, ?)", (domain, repo))
+    delete("DELETE FROM publicro WHERE domain = ? AND repo = ?", (domain, repo))
+    insert("INSERT INTO publicro (domain, repo) VALUES (?, ?)", (domain, repo))
 
 def db_clear_publicro(domain, repo):
     assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
@@ -960,9 +806,152 @@ def db_clear_host(host, guest):
     assert exists("SELECT 1 FROM user WHERE user = ?", (host,))
     delete("DELETE FROM guest WHERE guest = ? AND host = ?", (guest, host))
 
+# *****************************************************************************
+# User input validation primitives
+# *****************************************************************************
+
+def has_linebreaks(x):
+    return '\n' in x or '\r' in x
+
+def is_word(x):
+    return len(x.split()) <= 1  # hope this will do
+
+def is_valid_filename(x):
+    return len(x.split()) <= 1 and x not in ['.','..'] and '/' not in x and '\\' not in x
+
+def need_valid_username(user):
+    if not is_word(user) or not exact_match(username_regex, user):
+        raise GA_Invalid("'{}' is not a valid user name".format(user))
+
+def need_valid_guestname(user):
+    if not user.startswith('guest-'):
+        raise GA_Invalid("'{}' is not a valid guest user name (must start with guest-)".format(user))
+    if not is_word(user) or not exact_match(r'guest-' + username_regex, user):
+        raise GA_Invalid("'{}' is not a valid guest user name".format(user))
+
+def need_valid_domainname(domain):
+    if not is_valid_filename(domain) or not exact_match(domainname_regex, domain):
+        raise GA_Invalid("'{}' is not a valid domain name".format(domain))
+
+def need_valid_reponame(repo):
+    if not is_valid_filename(repo) or not exact_match(reponame_regex, repo):
+        raise GA_Invalid("'{}' is not a valid repo name".format(repo))
+
+def need_valid_userdesc(desc):
+    if has_linebreaks(desc) or not exact_match(userdesc_regex, desc):
+        raise GA_Invalid("'{}' is not a valid user desc".format(desc))
+
+def need_valid_domaindesc(desc):
+    if has_linebreaks(desc) or not exact_match(domaindesc_regex, desc):
+        raise GA_Invalid("'{}' is not a valid domain desc".format(desc))
+
+def need_valid_repodesc(desc):
+    if has_linebreaks(desc) or not exact_match(repodesc_regex, desc):
+        raise GA_Invalid("'{}' is not a valid repo desc".format(desc))
+
+def need_valid_sshkey_keytype(keytype):
+    if not is_word(keytype) or not exact_match(sshkey_keytype_regex, keytype):
+        raise GA_Invalid("'{}' is not a valid sshkey keytype".format(keytype))
+
+def need_valid_sshkey_key(key):
+    if not is_word(key) or not exact_match(sshkey_key_regex, key):
+        raise GA_Invalid("'{}' is not valid (base64-encoded) ssh key".format(key))
+
+def need_valid_sshkey_comment(comment):
+    if has_linebreaks(comment) or not exact_match(sshkey_comment_regex, comment):
+        raise GA_Invalid("'{}' is not a valid sshkey comment".format(comment))
+
+def need_valid_boolean(boolean):
+    if boolean not in ['true', 'false']:
+        raise GA_Invalid("'{}' is not a valid boolean. Need 'true' or 'false'".format(boolean))
+
+def need_valid_perm(perm):
+    if perm not in ['none','r','rw']:
+        raise GA_Invalid("'{}' is not a valid permission mode. Possible: none, r, rw".format(perm))
+
+def need_valid_repospec(word):
+    ws = rest.split('/')
+    if len(ws) != 2:
+        GA_Invalid("invalid repo path: {}".format(rest))
+    domain, repo = ws
+    need_valid_domainname(domain)
+    need_valid_reponame(repo)
+    return domain, repo
+
+# Do we really need our own command-line splitter?
+# - Maybe we could get along with just whitespace splitting (comments as
+#   the only thing where whitespace is allowed are always in the last
+#   column)
+# - The shlex module could be used as well. But shlex's supported syntax
+#   is even more complicated than the one implemented below.
+def need_cmd_array(cmd_string):
+    cmd = ()
+    word = ""
+    started = False
+    quoted = False
+    escaped = False
+    for char in cmd_string:
+        if escaped:
+            word += char
+            escaped = False
+        elif char == '\\':
+            escaped = True
+            started = True
+        elif char == '"':
+            quoted = not quoted
+            started = True
+        elif quoted or char not in ' \t\n\r':
+            word += char
+            started = True
+        elif started:
+            cmd = cmd + (word,)
+            word = ''
+            started = False
+    if quoted:
+        raise GA_Invalid("Unterminated quote: {}".format(cmd_string))
+    if escaped:
+        raise GA_Invalid("Trailing escape character: {}".format(cmd_string))
+    if started:
+        cmd = cmd + (word,)
+    return cmd
+
+def need_not_root():
+    if loguser is None:
+        raise GA_Invalid("You are root admin; this makes no sense")
 
 # **********************************************************************
-# GITADMIN TASKS
+# Authorization primitives
+# **********************************************************************
+
+def require_regular_user():
+    if loguser is not None:
+        guests = db_list_guests()
+        if (loguser,) not in map(lambda r: r[0], loguser):
+            raise GA_Unauthorized("you're not a regular user")
+
+def require_host_of_guest(guest):
+    if loguser is not None:
+        guests = db_list_guests_of_user(loguser)
+        if guest not in map(lambda r: r[0], guests):
+            raise GA_Unauthorized("that's not one of your guests")
+
+def require_domain_exists(domain):
+    dom = db_list_domains()
+    if domain not in map(lambda r: r[0], dom):
+        raise GA_Unauthorized("no such domain")
+
+def require_domain_admin(domain):
+    if loguser is not None:
+        adm = db_list_domain_admins(domain)
+        if loguser not in map(lambda r: r[1], adm):
+            raise GA_Unauthorized("domain admin privileges needed")
+
+def require_root_admin():
+    if loguser is not None:
+        raise GA_Unauthorized("root admin privileges needed")
+
+# **********************************************************************
+# Gitadmin tasks
 # **********************************************************************
 
 #
@@ -1267,9 +1256,8 @@ def task_delete_own_guest(guest):
     db_clear_host(loguser, guest)
     db_delete_user(guest)
 
-
 # **********************************************************************
-# COMMAND EXECUTION
+# Command execution
 # **********************************************************************
 
 def run_cmd_array(user, args):
@@ -1319,9 +1307,8 @@ def run_cmd_array(user, args):
     finally:
         loguser = None
 
-
 # **********************************************************************
-# INTERACTIVE SHELL
+# Interactive shell
 # **********************************************************************
 
 class GitAdminShell(cmd.Cmd):
@@ -1349,8 +1336,8 @@ class GitAdminShell(cmd.Cmd):
     def emptyline(self):
         pass
 
-    # 'EOF' (a string) is used to indicate that the stdin stream has ended. Not
-    # making this up. And why do we need to handle this at all by default?
+    # 'EOF' (a string) is used to indicate EOF on stdin.
+    # And why do we need to handle this at all by default?
     def default(self, line):
         if line in ['EOF', 'exit', 'quit']:
             # On EOF, before exiting, end the line which the prompt started.
@@ -1394,9 +1381,8 @@ class GitAdminShell(cmd.Cmd):
 # what we're doing here!
 delattr(cmd.Cmd, 'do_help')
 
-
 # **********************************************************************
-# TRANSPARENT REPO ACCESS
+# Transparent repo access
 # **********************************************************************
 
 def exec_git_upload_pack(spec):
@@ -1410,20 +1396,25 @@ def exec_git_receive_pack(spec):
     os.execvp("git-receive-pack", ["git-receive-pack", repopath])
 
 # **********************************************************************
-# MAIN
+# Main
 # **********************************************************************
 
 def invoke_help():
     print(help_long)
 
 def invoke_init():
-    fs_initialize()
+    try:
+        fs_initialize()
+    except GA_FSError as e:
+        print("Initialization failed: {}".format(e), file=sys.stderr)
+        sys.exit(13)
 
 def invoke_with_cmdarray(user, cmd_array):
     with_db(run_cmd_array, user, cmd_array)
 
 def invoke_with_cmdstring(user, cmd_string):
-    with_db(run_cmd_array, user, need_cmd_array(cmd_string))
+    cmd_array = need_cmd_array(cmd_string)
+    with_db(run_cmd_array, user, cmd_array)
 
 def invoke_with_sshoriginalcommand(user, ssh_original_command):
     ws = tuple(shlex.split(ssh_original_command))
@@ -1516,6 +1507,6 @@ if __name__ == '__main__':
     except GA_FailedDependencies as e:
         print("gitadmin: ERROR: {}".format(e), file=sys.stderr)
         sys.exit(6)
-    #except (GA_DBError, GA_FSError, Exception) as e:
-        #print("gitadmin: ERROR: Oops! {}. Please contact your system or network administrator".format(e), file=sys.stderr)
-        #sys.exit(13)
+    except (GA_DBError, GA_FSError, Exception) as e:
+        print("gitadmin: ERROR: Oops! {}. Please contact your system or network administrator".format(e), file=sys.stderr)
+        sys.exit(13)
