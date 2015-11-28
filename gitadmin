@@ -25,17 +25,16 @@ is_stderr_tty = os.isatty(sys.stderr.fileno())
 config_basedir = 'gitadmin-basedir'
 
 # These regexen can be tweaked, but additionally the following assumptions
-# will be checked for any value that goes in the DB:
+# will be checked for values that go in the DB:
 #
-# - repos and domains need to be valid filepath components (not "." or "..",
-#   does not contain "/" or "\"
+# - repos and domains need to be filepath components (not '.' or '..',
+#   no '/' or '\' allowed)
 # - other than comments which are always printed in the last column, no
 #   whitespace allowed (which would prohibit scripting)
-# - multiple lines not allowed (currently check for \r and \n)
+# - no '\r' or '\n' allowed (which would prohibit scripting)
 #
-# Warning: user names go to the authorized_keys file. Dangerous!
-# There may be other, undocumented assumptions. It's probably unwise to allow
-# shell special characters in non-comment data.
+# Warning: user names go directly to the authorized_keys file. It's unwise
+#          to allow shell special characters in non-comment data.
 #
 # as per the python3 documentation, character classes ([a-z] etc) are ASCII
 username_regex        = r"""[a-z][a-z0-9]{0,14}"""
@@ -52,7 +51,7 @@ repodesc_regex        = r"""[]a-zA-Z0-9 !"#$%&'()*+,./:;<=>@?[\^_`{|}~-]{0,255}"
 # Global state
 # *****************************************************************************
 
-# logged in user
+# logged in or su'ed user
 loguser = None
 
 # database connection
@@ -97,7 +96,7 @@ gitadmin [-u USER] ARGS...
     -u USER is given, interpret the command as this gitadmin user.
     For example, a valid invocation from the shell (sh) would be
 
-        $ gitadmin create_user john "John Doe"
+        $ gitadmin create-user john "John Doe"
 
 gitadmin [-u USER] -c CMD
 
@@ -107,7 +106,7 @@ gitadmin [-u USER] -c CMD
     little in the next paragraph. If -u USER is given, run as the
     given gitadmin user. Example gitadmin invocation from sh:
 
-        $ gitadmin -u john -c 'set_perm john testrepo jane rw'
+        $ gitadmin -u john -c 'set-perm john testrepo jane rw'
 
 gitadmin [-u USER]
 
@@ -123,9 +122,9 @@ gitadmin [-u USER]
 
     Example gitadmin commands:
 
-        gitadmin> create_repo john testrepo "repo of \"John Doe\""
-        gitadmin> set_perm john testrepo john rw
-        gitadmin> set_perm john testrepo jane r
+        gitadmin> create-repo john testrepo "repo of \"John Doe\""
+        gitadmin> set-perm john testrepo john rw
+        gitadmin> set-perm john testrepo jane r
 
     (The `gitadmin> ' prompts are printed by gitadmin when connected
     to a terminal to indicate that it is waiting for the next command).
@@ -162,7 +161,7 @@ SSH_ORIGINAL_COMMAND="gitadmin CMD" gitadmin [-u USER]
     Like above, the command string is parsed using the python shlex
     module. Thus, it's slightly different from
 
-        $ echo 'ARGS...' | ssh -T git@HOST
+        $ echo 'CMD' | ssh -T git@HOST
 
     because the latter command is parsed using the simpler lexer
     which is also used in interactive gitadmin sessions.
@@ -289,16 +288,16 @@ CREATE TABLE guest
 );
 """
 
-
 # *****************************************************************************
 # Exceptions
 # *****************************************************************************
 
 #
-# Custom exceptions. For clearer semantics, runtime exceptions that we care
-# about will be immediately converted to one of these.
+# Custom exceptions. For clearer semantics, runtime exceptions will be
+# immediately converted to these.
 #
-# Any other runtime exceptions are bugs.
+# Any other runtime exceptions are bugs, or we don't care about them like
+# MemoryError.
 #
 
 class GA_Exception(Exception):
@@ -342,7 +341,6 @@ class GA_FailedDependencies(GA_Exception):
        to be performed first (like deleting all repos from a domain before the
        domain can be deleted)"""
     errcode = "FAILED-DEPENDENCIES"
-
 
 # **********************************************************************
 # Helper functions
@@ -870,9 +868,9 @@ def need_valid_perm(perm):
         raise GA_Invalid("'{}' is not a valid permission mode. Possible: none, r, rw".format(perm))
 
 def need_valid_repospec(word):
-    ws = rest.split('/')
+    ws = word.split('/')
     if len(ws) != 2:
-        GA_Invalid("invalid repo path: {}".format(rest))
+        GA_Invalid("invalid repo path: {}".format(word))
     domain, repo = ws
     need_valid_domainname(domain)
     need_valid_reponame(repo)
