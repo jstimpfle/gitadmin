@@ -987,16 +987,16 @@ def valid_list_perms(domain, repo):
     need_valid_reponame(repo)
 
 def valid_list_own_domains():
-    return
+    need_not_root()
 
 def valid_list_own_perms():
-    return
+    need_not_root()
 
 def valid_list_own_sshkeys():
-    return
+    need_not_root()
 
 def valid_list_own_guests():
-    return
+    need_not_root()
 
 def valid_create_user(user, desc):
     need_valid_username(user)
@@ -1063,10 +1063,12 @@ def valid_remove_own_sshkey(keytype, key, comment):
     need_valid_sshkey_comment(comment)
 
 def valid_create_own_guest(guest, desc):
+    need_not_root()
     need_valid_username(guest)
     need_valid_userdesc(desc)
 
 def valid_delete_own_guest(guest):
+    need_not_root()
     need_valid_username(guest)
 
 #
