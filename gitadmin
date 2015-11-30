@@ -203,10 +203,10 @@ commands_listing = r"""
    list-own-perms                           
    list-own-domains                         
    list-own-sshkeys                         
-   add-own-sshkey ALGO KEY DESC             
+   add-own-sshkey KEYTYPE KEY COMMENT       
    remove-own-sshkey                        
    list-own-guests                          
-   create-own-guest USER DESCRIPTION        
+   create-own-guest USER DESCRIPTION KEYTYPE KEY COMMENT
    delete-own-guest USER                    
 """
 
@@ -611,6 +611,10 @@ def fs_set_publicro_symlink(domain, repo):
 def fs_clear_publicro_symlink(domain, repo):
     unlink(path_publicro_repo_symlink(domain, repo))
 
+def fs_write_authorized_keys(keys):
+    data = ''.join("command=\"gitadmin -u {}\" {} {} {}\n".format(user, keytype, key, comment) for user, keytype, key, comment in keys)
+    write_file(path_authorized_keys(), bytes(data, 'UTF-8'))
+
 # **********************************************************************
 # Database logic
 # **********************************************************************
@@ -663,6 +667,17 @@ def db_list_perms_of_user(user):
     assert user is None or exists("SELECT 1 FROM user WHERE user = ?", (user,))
     return select("SELECT domain, repo, user, perm FROM perm WHERE user = ? ORDER BY domain, repo, user, perm", (user,))
 
+def db_list_perms_of_repo(domain, repo):
+    if not exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo)):
+        raise GA_NotFound("Repo not found")
+    return select("SELECT domain, repo, user, perm FROM perm WHERE domain = ? AND repo = ? ORDER BY domain, repo, user, perm", (domain, repo))
+
+def db_list_perms_of_repo_and_user(domain, repo, user):
+    assert user is None or exists("SELECT 1 FROM user WHERE user = ?", (user,))
+    if not exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo)):
+        raise GA_NotFound("Repo not found")
+    return select("SELECT domain, repo, user, perm FROM perm WHERE domain = ? AND REPO = ? AND user = ? ORDER BY domain, repo, user, perm", (domain, repo, user))
+
 def db_list_guests_of_user(user):
     assert exists("SELECT 1 FROM user WHERE user = ?", (user,))
     return select("SELECT user, desc FROM user, guest WHERE user = guest AND host = ? ORDER BY user, desc", (user,))
@@ -682,11 +697,6 @@ def db_list_repos_of_domain(domain):
 def db_list_domains_of_user(user):
     assert exists("SELECT 1 FROM user WHERE user = ?", (user,))
     return select("SELECT domain, user FROM admin WHERE user = ? ORDER BY domain, user", (user,))
-
-def db_list_perms_of_repo(domain, repo):
-    if not exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo)):
-        raise GA_NotFound("Repo not found")
-    return select("SELECT domain, repo, user, perm FROM perm WHERE domain = ? AND repo = ? ORDER BY domain, repo, user, perm", (user,))
 
 def db_insert_user(user, desc):
     if exists("SELECT 1 FROM user WHERE user = ?", (user,)):
@@ -921,10 +931,22 @@ def need_not_root():
 # Authorization primitives
 # **********************************************************************
 
+def require_read_perm(domain, repo):
+    assert(loguser is not None)
+    rs = db_list_perms_of_repo_and_user(domain, repo, loguser)
+    if not rs:
+        raise GA_Unauthorized("{}/{}: No read permission for {}".format(domain, repo, loguser))
+
+def require_write_perm(domain, repo):
+    assert(loguser is not None)
+    rs = db_list_perms_of_repo_and_user(domain, repo, loguser)
+    if not rs or "rw" not in map(lambda r: r[3], rs):
+        raise GA_Unauthorized("{}/{}: No write permission for {}".format(domain, repo, loguser))
+
 def require_regular_user():
     if loguser is not None:
         guests = db_list_guests()
-        if (loguser,) not in map(lambda r: r[0], loguser):
+        if loguser in map(lambda r: r[0], loguser):
             raise GA_Unauthorized("you're not a regular user")
 
 def require_host_of_guest(guest):
@@ -940,7 +962,7 @@ def require_domain_exists(domain):
 
 def require_domain_admin(domain):
     if loguser is not None:
-        adm = db_list_domain_admins(domain)
+        adm = db_list_admins_of_domain(domain)
         if loguser not in map(lambda r: r[1], adm):
             raise GA_Unauthorized("domain admin privileges needed")
 
@@ -1062,10 +1084,13 @@ def valid_remove_own_sshkey(keytype, key, comment):
     need_valid_sshkey_key(key)
     need_valid_sshkey_comment(comment)
 
-def valid_create_own_guest(guest, desc):
+def valid_create_own_guest(guest, desc, keytype, key, comment):
     need_not_root()
     need_valid_username(guest)
     need_valid_userdesc(desc)
+    need_valid_sshkey_keytype(keytype)
+    need_valid_sshkey_key(key)
+    need_valid_sshkey_comment(comment)
 
 def valid_delete_own_guest(guest):
     need_not_root()
@@ -1148,7 +1173,7 @@ def auth_add_own_sshkey(keytype, key, comment):
 def auth_remove_own_sshkey(keytype, key, comment):
     return
 
-def auth_create_own_guest(guest, desc):
+def auth_create_own_guest(guest, desc, keytype, key, comment):
     require_regular_user()
 
 def auth_delete_own_guest(guest):
@@ -1172,7 +1197,7 @@ def task_list_users():
     return db_list_users()
 
 def task_list_admins(domain):
-    return db_list_domain_admins(domain)
+    return db_list_admins_of_domain(domain)
 
 def task_list_perms(domain, repo):
     return db_list_perms_of_repo(domain, repo)
@@ -1194,6 +1219,7 @@ def task_create_user(user, desc):
 
 def task_delete_user(user):
     db_delete_user(user)
+    fs_write_authorized_keys(db_list_sshkeys())
 
 def task_create_domain(domain, desc):
     db_insert_domain(domain, desc)
@@ -1244,33 +1270,40 @@ def task_set_admin(domain, user, admin):
 
 def task_add_own_sshkey(keytype, key, comment):
     db_insert_sshkey(loguser, keytype, key, comment)
+    fs_write_authorized_keys(db_list_sshkeys())
 
 def task_remove_own_sshkey(keytype, key, comment):
     db_delete_sshkey(loguser, keytype, key)
+    fs_write_authorized_keys(db_list_sshkeys())
 
-def task_create_own_guest(guest, desc):
+def task_create_own_guest(guest, desc, keytype, key, comment):
     db_insert_user(guest, desc)
     db_set_host(loguser, guest)
+    db_insert_sshkey(guest, keytype, key, comment)
+    fs_write_authorized_keys(db_list_sshkeys())
 
 def task_delete_own_guest(guest):
     db_clear_host(loguser, guest)
     db_delete_user(guest)
+    fs_write_authorized_keys(db_list_sshkeys())
 
 # **********************************************************************
 # Command execution
 # **********************************************************************
 
-def run_cmd_array(user, args):
+def run_cmd_array(args):
     global loguser
 
     if not args:
         return
 
+    user = loguser
+
     if user is None and len(args) >= 2 and args[0] == 'su':
         user = args[1]
         args = args[2:]
 
-    # prefer dash over underscore anytime!
+    # prefer dash over underscore any time!
     cmdlow = args[0].replace('-', '_')
 
     auth  = globals().get('auth_'  + cmdlow)
@@ -1290,6 +1323,7 @@ def run_cmd_array(user, args):
         (task_spec[1] is not None and len(args) - 1 < len(task_spec[0]))):
         raise GA_Invalid("too few or too many arguments. Usage: {} {}".format(args[0], ' '.join(x.upper() for x in task_spec[0])))
 
+    realuser = loguser
     loguser = user
 
     try:
@@ -1298,14 +1332,12 @@ def run_cmd_array(user, args):
         def execute():
             auth(*args[1:])
             return task(*args[1:])
-
         r = run_transaction(execute)
 
         if r is not None:
             sys.stdout.write(format_table(r))
-
     finally:
-        loguser = None
+        loguser = realuser
 
 # **********************************************************************
 # Interactive shell
@@ -1317,7 +1349,7 @@ class GitAdminShell(cmd.Cmd):
     intro = shell_intro
     prompt = shell_prompt
 
-    def __init__(self, user):
+    def __init__(self):
         # Override the bad default to output prompts to sys.stdout.
         # The docs don't hint that the completekey default argument of 'Tab' is
         # really a string (!). Giving None instead doesn't restore the default
@@ -1325,11 +1357,10 @@ class GitAdminShell(cmd.Cmd):
         # configuration option.
         super().__init__('Tab', sys.stdin, sys.stderr)
 
-        self.user = user
-        if user is None:
+        if loguser is None:
             print("Starting root admin shell...", file=sys.stderr)
         else:
-            print("Logged in as {}".format(user), file=sys.stderr)
+            print("Logged in as {}".format(loguser), file=sys.stderr)
 
     # We need to override this method because the default is to repeat
     # the last command.
@@ -1346,7 +1377,7 @@ class GitAdminShell(cmd.Cmd):
             # indicate that the interpreter should be ended
             return True
         else:
-            run_cmd_array(self.user, need_cmd_array(line))
+            run_cmd_array(need_cmd_array(line))
 
     # We must override this method to be able to handle exceptions from
     # executed commands
@@ -1388,11 +1419,13 @@ delattr(cmd.Cmd, 'do_help')
 def exec_git_upload_pack(spec):
     domain, repo = need_valid_repospec(spec)
     require_read_perm(domain, repo)
+    repopath = path_repo_dir(domain, repo)
     os.execvp("git-upload-pack", ["git-upload-pack", repopath])
 
 def exec_git_receive_pack(spec):
     domain, repo = need_valid_repospec(spec)
     require_write_perm(domain, repo)
+    repopath = path_repo_dir(domain, repo)
     os.execvp("git-receive-pack", ["git-receive-pack", repopath])
 
 # **********************************************************************
@@ -1409,14 +1442,14 @@ def invoke_init():
         print("Initialization failed: {}".format(e), file=sys.stderr)
         sys.exit(13)
 
-def invoke_with_cmdarray(user, cmd_array):
-    with_db(run_cmd_array, user, cmd_array)
+def invoke_with_cmdarray(cmd_array):
+    with_db(run_cmd_array, cmd_array)
 
-def invoke_with_cmdstring(user, cmd_string):
+def invoke_with_cmdstring(cmd_string):
     cmd_array = need_cmd_array(cmd_string)
-    with_db(run_cmd_array, user, cmd_array)
+    with_db(run_cmd_array, cmd_array)
 
-def invoke_with_sshoriginalcommand(user, ssh_original_command):
+def invoke_with_sshoriginalcommand(ssh_original_command):
     ws = tuple(shlex.split(ssh_original_command))
     if len(ws) == 2 and ws[0] == 'git-upload-pack':
         with_db(exec_git_upload_pack, ws[1])
@@ -1425,17 +1458,19 @@ def invoke_with_sshoriginalcommand(user, ssh_original_command):
     elif len(ws) >= 2 and ws[0] == 'gitadmin':
         with_db(run_cmd_array, ws[1:])
     else:
-        raise GA_Invalid("Invalid invocation (SSH_ORIGINAL_COMMAND): need \"git-(upload|receive)-pack 'DOMAIN/REPO'\" or \"gitadmin <GITADMIN-CMD>\"", file=sys.stderr)
+        raise GA_Invalid("Invalid invocation (SSH_ORIGINAL_COMMAND): need \"git-(upload|receive)-pack 'DOMAIN/REPO'\" or \"gitadmin <GITADMIN-CMD>\"")
 
-def invoke_shell(user):
+def invoke_shell():
     if is_stdin_tty and is_stderr_tty:
-        shell = GitAdminShell(user)
+        shell = GitAdminShell()
         with_db(shell.cmdloop)
     else:
         for line in sys.stdin:
-            with_db(run_cmd_array, user, need_cmd_array(line))
+            with_db(run_cmd_array, need_cmd_array(line))
 
 def gitadmin(argv, ssh_original_command=None):
+    global loguser
+
     argv = tuple(argv[1:])
 
     wantinit = None
@@ -1471,18 +1506,21 @@ def gitadmin(argv, ssh_original_command=None):
     exclusive(wantinit, wanthelp, cmd_array, cmd_string)
     exclusive(wantinit, wanthelp, req_user)
 
+    # login. Logout is when program quits
+    loguser = req_user
+
     if wanthelp is not None:
         invoke_help()
     elif wantinit is not None:
         invoke_init()
     elif cmd_array is not None:
-        invoke_with_cmdarray(req_user, cmd_array)
+        invoke_with_cmdarray(cmd_array)
     elif cmd_string is not None:
-        invoke_with_cmdstring(req_user, cmd_string)
+        invoke_with_cmdstring(cmd_string)
     elif ssh_original_command is not None:
-        invoke_with_sshoriginalcommand(req_user, ssh_original_command)
+        invoke_with_sshoriginalcommand(ssh_original_command)
     else:
-        invoke_shell(req_user)
+        invoke_shell()
 
 if __name__ == '__main__':
     try:
