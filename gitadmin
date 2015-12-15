@@ -1,11 +1,5 @@
 #!/usr/bin/python3
-
-#
-# gitadmin - Copyright (c) 2015, Jens Stimpfle
-#
-# Find invocation instructions below
-# and documentation throughout the code
-#
+# gitadmin - Copyright (C) 2015, Jens Stimpfle
 
 import os, sys, re
 import shlex
@@ -24,19 +18,16 @@ is_stderr_tty = os.isatty(sys.stderr.fileno())
 
 config_basedir = 'gitadmin-basedir'
 
-# These regexen can be tweaked, but additionally the following assumptions
-# will be checked for values that go in the DB:
+# These can be tweaked. Additionally the following properties
+# are checked for values that are meant to enter the DB:
 #
-# - repos and domains need to be filepath components (not '.' or '..',
+# - repos and domains are filepath components (not '.' or '..',
 #   no '/' or '\' allowed)
-# - other than comments which are always printed in the last column, no
-#   whitespace allowed (which would prohibit scripting)
-# - no '\r' or '\n' allowed (which would prohibit scripting)
+# - no whitespace allowed (good for scripting).
+#   The exception are comments which can contains spaces
+#   (comments always go in the last column)
 #
-# Warning: user names go directly to the authorized_keys file. It's unwise
-#          to allow shell special characters in non-comment data.
-#
-# as per the python3 documentation, character classes ([a-z] etc) are ASCII
+# python3 doc says the character classes ([a-z] etc) are ASCII / C locale
 username_regex        = r"""[a-z][a-z0-9]{0,14}"""
 domainname_regex      = r"""[a-z][a-z0-9]{0,14}"""
 reponame_regex        = r"""[a-zA-Z][a-zA-Z0-9_-]{0,30}"""
@@ -81,19 +72,17 @@ gitadmin --help
 
 gitadmin --init
 
-    Initialize a new gitadmin environment. gitadmin aborts if an
-    existing environment is found. The base directory 'gitadmin-basedir'
-    (or whatever was configured by changing the program code) must
-    exist, and be empty.  Filepath customization is currently done
-    after initialization by moving the objects which were created in
-    the base directory somewhere else, and putting symlinks into the
-    base directory.
+    Initialize a new gitadmin environment. Gitadmin aborts if an
+    existing environment is found.
+    Filepaths can be customized after initialization by moving the
+    files which were created in the base directory somewhere else,
+    and putting symlinks into the base directory.
 
 gitadmin [-u USER] ARGS...
 
     The argument list ARGS is interpreted as a (pre-split) gitadmin
-    command (possible commands are listed by the `help' command). If
-    -u USER is given, interpret the command as this gitadmin user.
+    command. Possible commands are listed by the `help' command.
+    If -u USER is given, interpret the command as this gitadmin user.
     For example, a valid invocation from the shell (sh) would be
 
         $ gitadmin create-user john "John Doe"
@@ -101,33 +90,29 @@ gitadmin [-u USER] ARGS...
 gitadmin [-u USER] -c CMD
 
     Run the gitadmin shell in noninteractive mode, interpreting CMD
-    which must be a gitadmin shell command (a single argument). The
-    gitadmin shell syntax is explained a little in the next paragraph.
+    which must be a gitadmin shell command (a single argument).
     If -u USER is given, run as the given gitadmin user.
     Example gitadmin invocation from sh:
 
         $ gitadmin -u john -c 'set-perm john testrepo jane rw'
 
+    Commands are split into words with a simple algorithm involving
+    quotation mark (") as quote character and backslash (\) as escape
+    character, similar to the quoting algorithm known from sh. Example:
+    This\ is" all one "word.
+
+    Example gitadmin commands:
+
+        create-repo john testrepo "repo of \"John Doe\""
+        set-perm john testrepo john rw
+        set-perm john testrepo jane r
+
 gitadmin [-u USER]
 
     Run the gitadmin shell, interpreting commands read from stdin.
     If -u USER is given, run the shell as this gitadmin user.
-    If standard input and standard error are both connected to ttys,
-    an interactive shell with command-line editing and (session)
-    history is run.
-    Commands are read line by line, and split into words with a
-    simple algorithm involving quotation mark (") as quote character
-    and backslash (\) as escape character, similar to the quoting
-    algorithm known from sh. Example: This\ is" all one "word.
-
-    Example gitadmin commands:
-
-        gitadmin> create-repo john testrepo "repo of \"John Doe\""
-        gitadmin> set-perm john testrepo john rw
-        gitadmin> set-perm john testrepo jane r
-
-    (The `gitadmin> ' prompts are printed by gitadmin when connected
-    to a terminal to indicate that it is waiting for the next command).
+    If stdin and stderr are both connected to ttys the shell will
+    be interactive (with command-line editing and history).
 
 SSH_ORIGINAL_COMMAND="git-upload-pack DOMAIN/REPO" gitadmin [-u USER]
 SSH_ORIGINAL_COMMAND="git-receive-pack DOMAIN/REPO" gitadmin [-u USER]
@@ -141,13 +126,13 @@ SSH_ORIGINAL_COMMAND="git-receive-pack DOMAIN/REPO" gitadmin [-u USER]
     This is used to make git over SSH work, with gitadmin as a
     transparent authentication and authorization layer. The idea is
     that the system administrator sets up a `gitadmin' system user,
-    and configures the `authorized_keys' file which is maintained
-    by gitadmin as the `SshAuthorizedKeysFile' for that system user
-    in the SSH server configuration. Since the `authorized_keys' file
-    has all lines prefixed with `command="gitadmin -u USER"', when an
-    ssh client connects and requests to run a command instead of an
-    interactive shell, sshd will store the command originally sent by
-    the client in SSH_ORIGINAL_COMMAND, and run `gitadmin -u USER'.
+    and uses the `authorized_keys' file which is maintained
+    by gitadmin as SSH authentication method.
+    Since the `authorized_keys' file has all lines prefixed with
+    `command="gitadmin -u USER"', when an ssh client requests to run
+    a command instead of an interactive shell, sshd will store the
+    command originally sent by the client in SSH_ORIGINAL_COMMAND,
+    and run `gitadmin -u USER'.
 
 SSH_ORIGINAL_COMMAND="gitadmin CMD" gitadmin [-u USER]
 
@@ -172,42 +157,42 @@ shell_intro = "Welcome to gitadmin. Type 'help' for a list of available commands
 shell_prompt = "gitadmin> "
 
 commands_listing = r"""
- Root admin commands:                       
-                                            
-   su USER CMD...                           
-   create-domain DOMAIN DESCRIPTION         
-   delete-domain DOMAIN                     
-   set-domain-desc DOMAIN DESCRIPTION       
-   create-user USER DESCRIPTION             
-   delete-user USER                         
-   set-user-desc USER DESCRIPTION           
-                                            
- Domain admin commands:                     
-                                            
-   list-repos DOMAIN                        
-   create-repo DOMAIN REPO DESCRIPTION      
-   delete-repo DOMAIN REPO                  
-   set-repo-desc DOMAIN REPO DESCRIPTION    
-   set-repo-public DOMAIN REPO <true|false> 
-   list-perms DOMAIN REPO                   
-   set-perm DOMAIN REPO USER <none|r|rw>    
-   list-admins DOMAIN                       
-   set-admin DOMAIN USER <true|false>       
-                                            
- User commands:                             
-                                            
-   help                                     
-   whoami                                   
-   list-users                               
-   list-domains                             
-   list-own-perms                           
-   list-own-domains                         
-   list-own-sshkeys                         
-   add-own-sshkey KEYTYPE KEY COMMENT       
-   remove-own-sshkey                        
-   list-own-guests                          
+ Root admin commands:
+
+   su USER CMD...
+   create-domain DOMAIN DESCRIPTION
+   delete-domain DOMAIN
+   set-domain-desc DOMAIN DESCRIPTION
+   create-user USER DESCRIPTION
+   delete-user USER
+   set-user-desc USER DESCRIPTION
+
+ Domain admin commands:
+
+   list-repos DOMAIN
+   create-repo DOMAIN REPO DESCRIPTION
+   delete-repo DOMAIN REPO
+   set-repo-desc DOMAIN REPO DESCRIPTION
+   set-repo-public DOMAIN REPO <true|false>
+   list-perms DOMAIN REPO
+   set-perm DOMAIN REPO USER <none|r|rw>
+   list-admins DOMAIN
+   set-admin DOMAIN USER <true|false>
+
+ User commands:
+
+   help
+   whoami
+   list-users
+   list-domains
+   list-own-perms
+   list-own-domains
+   list-own-sshkeys
+   add-own-sshkey KEYTYPE KEY COMMENT
+   remove-own-sshkey
+   list-own-guests
    create-own-guest USER DESCRIPTION KEYTYPE KEY COMMENT
-   delete-own-guest USER                    
+   delete-own-guest USER
 """
 
 sql_schema_version = "0.1"
@@ -219,14 +204,12 @@ CREATE TABLE gitadmin_metadata
 CREATE TABLE user
 ( user VARCHAR NOT NULL
 , desc VARCHAR NOT NULL
---
 , PRIMARY KEY (user)
 );
 
 CREATE TABLE domain
 ( domain VARCHAR NOT NULL
 , desc   VARCHAR NOT NULL
---
 , PRIMARY KEY (domain)
 );
 
@@ -234,7 +217,6 @@ CREATE TABLE repo
 ( domain VARCHAR NOT NULL
 , repo   VARCHAR NOT NULL
 , desc   VARCHAR NOT NULL
---
 , PRIMARY KEY (domain, repo)
 , FOREIGN KEY (domain) REFERENCES domain (domain)
 );
@@ -244,7 +226,6 @@ CREATE TABLE sshkey
 , keytype VARCHAR NOT NULL
 , key     VARCHAR NOT NULL
 , comment VARCHAR NOT NULL
---
 , PRIMARY KEY (user, key)
 , FOREIGN KEY (user) REFERENCES user (user)
 );
@@ -252,7 +233,6 @@ CREATE TABLE sshkey
 CREATE TABLE admin
 ( domain VARCHAR NOT NULL
 , user   VARCHAR NOT NULL
---
 , PRIMARY KEY (domain, user)
 , FOREIGN KEY (domain) REFERENCES domain (domain)
 , FOREIGN KEY (user)   REFERENCES user   (user)
@@ -263,7 +243,6 @@ CREATE TABLE perm
 , repo   VARCHAR NOT NULL
 , user   VARCHAR NOT NULL
 , perm   VARCHAR NOT NULL
---
 , PRIMARY KEY (domain, repo, user)
 , FOREIGN KEY (domain, repo) REFERENCES repo (domain, repo)
 , FOREIGN KEY (user)         REFERENCES user (user)
@@ -273,7 +252,6 @@ CREATE TABLE perm
 CREATE TABLE publicro
 ( domain VARCHAR NOT NULL
 , repo   VARCHAR NOT NULL
---
 , PRIMARY KEY (domain, repo)
 , FOREIGN KEY (domain, repo)   REFERENCES repo (domain, repo)
 );
@@ -281,7 +259,6 @@ CREATE TABLE publicro
 CREATE TABLE guest
 ( guest  VARCHAR NOT NULL
 , host   VARCHAR NOT NULL
---
 , PRIMARY KEY (guest, host)
 , FOREIGN KEY (guest) REFERENCES user (user)
 , FOREIGN KEY (host)  REFERENCES user (user)
@@ -291,78 +268,61 @@ CREATE TABLE guest
 # *****************************************************************************
 # Exceptions
 # *****************************************************************************
-
+# For clearer semantics, runtime exceptions are immediately converted
+# to these custom exceptions.
 #
-# Custom exceptions. For clearer semantics, runtime exceptions will be
-# immediately converted to these.
-#
-# Any other runtime exceptions are bugs, or we don't care about them like
-# MemoryError.
-#
+# Any unconverted runtime exceptions are bugs, or are not cared about,
+# like MemoryError.
 
 class GA_Exception(Exception):
     def __str__(self):
         return "{}: {}".format(self.errcode, super().__str__())
 
 class GA_FSError(GA_Exception):
-    """A kind-of unexpected error from the filesystem or the OS during a
-       gitadmin operation"""
+    "Unexpected error from the filesystem or the OS"
     errcode = "FS-ERROR"
 
 class GA_DBError(GA_Exception):
-    """A kind-of unexpected error from the database or the OS during a gitadmin
-       operation"""
+    "Unexpected error from the database or the OS"
     errcode = "DB-ERROR"
 
 class GA_CLIError(GA_Exception):
-    """Wrong command-line invocation"""
+    "Wrong command-line invocation"
     errcode = "COMMANDLINE-ERROR"
 
 class GA_Invalid(GA_Exception):
-    """gitadmin command could not be parsed, or wrong number of arguments, or
-       one or more arguments did not match the according regular expression"""
+    """gitadmin command could not be parsed, or wrong number of
+    arguments, or some argument did not match the according regular
+    expression"""
     errcode = "INVALID-COMMAND"
 
 class GA_Unauthorized(GA_Exception):
-    """A parsed command could not be processed due to insufficient
-       authorization"""
+    "A parsed command could not be authorized"
     errcode = "UNAUTHORIZED"
 
 class GA_NotFound(GA_Exception):
-    """An object reference could not be resolved"""
+    "An object reference could not be resolved"
     errcode = "NOT-FOUND"
 
 class GA_Exists(GA_Exception):
-    """An attempt was made to create an object which already exists"""
+    "Object could not be created because it already exists"
     errcode = "EXISTS"
 
 class GA_FailedDependencies(GA_Exception):
-    """An operation could not be performed because some other operation needs
-       to be performed first (like deleting all repos from a domain before the
-       domain can be deleted)"""
+    """Operation not carried out because some other operation needs
+    to be performed first (like deleting all repos from a domain
+    before the domain can be deleted)"""
     errcode = "FAILED-DEPENDENCIES"
 
 # **********************************************************************
 # Helper functions
 # **********************************************************************
 
-# regex matching wrapper
-
 def exact_match(regex, value):
     return re.match(r'^' + regex + r'$', value) is not None
 
-#
-# File system wrappers
-# 
-# Convert all filesystem exceptions into GA_FSError.
 # When an FS operation is not successful for any reason, that's unexpected.
-# We are in a bad state and will bail out (the other parts of the program
-# don't handle this exception).
-#
-# TODO:
-#   notify admin.
-#   come up with a rudimentary error handling strategy for some conditions?
-#
+# Bail out (GA_FSError isn't handled anywhere).
 
 def mkdir(dirpath):
     try:
@@ -396,28 +356,22 @@ def write_file(filepath, rawbytes):
         raise GA_FSError("Failed to write file: {}".format(e)) from e
 
 def create_git_repo(repopath):
-    # output from git binary is leaked to the user
     r = subprocess.call(["git", "init", "--bare", repopath])
     if r != 0:
         raise GA_FSError("Failed to create git repo: exitcode {} from \"git init --bare {}\"".format(r, repopath))
 
 def delete_git_repo(repopath):
-    # output from git binary is leaked to the user
     r = subprocess.call(["rm", "-r", "--", repopath])
     if r != 0:
         raise GA_FSError("Failed to delete git repo: exitcode {} from \"rm -r -- {}".format(r, repopath))
 
-#
-# Database wrapper
-#
-# Similarly to FS, any DB exceptions (like I/O errors, messed up database, or
-# integrity errors resulting from program logic bugs) are unexpected. Convert
-# into GA_DBError. The other parts of the program don't handle this exception.
-#
+# DB exceptions (like I/O errors, messed up database, or
+# integrity errors resulting from program logic bugs) are unexpected.
+# Bail out (GA_DBError isn't handled anywhere)
 
 def create_db():
     if os.path.exists(path_database()):
-        raise GA_DBError("Database exists. Refusing to create")
+        raise GA_DBError("Database exists")
     try:
         conn = sqlite3.connect(path_database(), isolation_level=None)
         conn.execute("PRAGMA FOREIGN_KEYS = ON")
@@ -536,10 +490,6 @@ def format_authorized_keys(rs):
     return ''.join('command="gitadmin -u {}" {} {} {}\n'.format(user, keytype, key, comment) for user, keytype, key, comment in rs)
 
 def format_table(rs):
-    # TODO: Not here
-    if not is_stdout_tty:
-        return ''.join('\t'.join(c for c in r) + '\n' for r in rs)
-
     lss = zip(*[[len(c) for c in r] for r in rs])
     ls = [max(ls) for ls in lss]
     xs = [[str(c).ljust(l) for c, l in tuple(zip(r, ls))[:-1]] + [r[-1]] for r in rs]
@@ -580,7 +530,7 @@ def path_publicro_repo_symlink(domain, repo):
     return os.path.join(config_basedir, 'publicro', domain, repo)
 
 # **********************************************************************
-# File system logic
+# File system
 # **********************************************************************
 
 def fs_initialize():
@@ -625,34 +575,19 @@ def fs_write_authorized_keys(keys):
     write_file(path_authorized_keys(), bytes(data, 'UTF-8'))
 
 # **********************************************************************
-# Database logic
+# Database
 # **********************************************************************
-
-#
-# These functions translate between the relational view of the database and the
+# Translate between the relational view of the database and the
 # more object-oriented gitadmin view.
-#
-# Although this section might seem isomorphic to the available gitadmin tasks,
-# the idea is that here we put DB *primitives* (transitions between valid
-# gitadmin DB states), and generally gitadmin tasks compound them.
-#
-# Also we want to put here all the SQL, and nothing else, for readability.
-#
-# Instead of using a complicated ORM mapper, we write some ad-hoc code.
 #
 # - All functions assert that the references given as function arguments exist
 #   (except where they are meant to be "created")
-#
 # - db_list_* are read-only. They return tuples of flat tuples (i.e, relations)
-#
 # - db_insert_* raise GA_Exists if the "object" to be inserted already exists.
-#
 # - db_delete_* raise GA_NotFound if the "object" to be deleted doesn't exist,
 #   or GA_FailedDependencies if a precondition for deletion isn't fulfilled.
-#
 # - db_set_* and db_clear_* return None. They are idempotent. GA_NotFound is
 #   raised when a referenced object doesn't exist.
-#
 
 def db_list_users():
     return select("SELECT user, desc FROM user ORDER BY user")
@@ -735,7 +670,6 @@ def db_insert_sshkey(user, keytype, key, comment):
     insert("INSERT INTO sshkey (user, keytype, key, comment) VALUES (?, ?, ?, ?)", (user, keytype, key, comment))
 
 def db_delete_user(user):
-    # also works for deletion of guests
     if not exists("SELECT 1 FROM user WHERE user = ?", (user,)):
         raise GA_NotFound("User not found")
     delete("DELETE FROM guest WHERE host = ?", (user,))
@@ -765,6 +699,11 @@ def db_delete_sshkey(user, keytype, key):
         raise GA_NotFound("SSH key not found or not your key")
     delete("DELETE FROM sshkey WHERE user = ? AND key = ?", (user, key))
 
+def db_update_user_desc(user, desc):
+    if not exists("SELECT 1 FROM user WHERE user = ?", (user,)):
+        raise GA_NotFound("No such user: {}".format(user))
+    update("UPDATE user SET desc = ?", (user,))
+
 def db_update_domain_desc(domain, desc):
     if not exists("SELECT 1 FROM domain WHERE domain = ?", (domain,)):
         raise GA_NotFound("No such domain: {}".format(domain))
@@ -789,7 +728,7 @@ def db_clear_admin(domain, user):
 
 def db_set_perm(domain, repo, user, perm):
     assert exists("SELECT 1 FROM domain WHERE domain = ?", (domain,))
-    assert perm == "r" or perm == "rw"
+    assert perm in ['r','rw']
     if not exists("SELECT 1 FROM repo WHERE domain = ? AND repo = ?", (domain, repo)):
         raise GA_NotFound("No such repo: {} {}".format(domain, repo))
     if not exists("SELECT 1 FROM user WHERE user = ?", (user,)):
@@ -829,14 +768,14 @@ def db_clear_host(host, guest):
     delete("DELETE FROM guest WHERE guest = ? AND host = ?", (guest, host))
 
 # *****************************************************************************
-# User input validation primitives
+# User input validation
 # *****************************************************************************
 
 def has_linebreaks(x):
     return '\n' in x or '\r' in x
 
 def is_word(x):
-    return len(x.split()) <= 1  # hope this will do
+    return len(x.split()) <= 1
 
 def is_valid_filename(x):
     return len(x.split()) <= 1 and x not in ['.','..'] and '/' not in x and '\\' not in x
@@ -900,12 +839,6 @@ def need_valid_repospec(word):
     need_valid_reponame(repo)
     return domain, repo
 
-# Do we really need our own command-line splitter?
-# - Maybe we could get along with just whitespace splitting (comments as
-#   the only thing where whitespace is allowed are always in the last
-#   column)
-# - The shlex module could be used as well. But shlex's supported syntax
-#   is even more complicated than the one implemented below.
 def need_cmd_array(cmd_string):
     cmd = ()
     word = ""
@@ -942,17 +875,17 @@ def need_not_root():
         raise GA_Invalid("You are root admin; this makes no sense")
 
 # **********************************************************************
-# Authorization primitives
+# Authorization
 # **********************************************************************
 
 def require_read_perm(domain, repo):
-    assert(loguser is not None)
+    assert loguser is not None
     rs = db_list_perms_of_repo_and_user(domain, repo, loguser)
     if not rs:
         raise GA_Unauthorized("{}/{}: No read permission for {}".format(domain, repo, loguser))
 
 def require_write_perm(domain, repo):
-    assert(loguser is not None)
+    assert loguser is not None
     rs = db_list_perms_of_repo_and_user(domain, repo, loguser)
     if not rs or "rw" not in map(lambda r: r[3], rs):
         raise GA_Unauthorized("{}/{}: No write permission for {}".format(domain, repo, loguser))
@@ -990,20 +923,14 @@ def require_root_admin():
         raise GA_Unauthorized("root admin privileges needed")
 
 # **********************************************************************
-# Gitadmin tasks
+# Gitadmin commands
 # **********************************************************************
-
-#
-# Here we implement the user-facing commands.
-#
-# The implementation for each command CMD is split into these parts:
-#
-# valid_CMD(): arguments to CMD are checked for syntactical (regex) validity.
-# auth_CMD(): arguments are checked for authorization (first DB read access)
-# task_CMD(): DB + FS transaction
-#      DB always comes first because we can't revert FS operation
-#      State will be left inconsistent when FS fails.
-#
+# Each command CMD is split in three pieces:
+#   valid_CMD(): syntactical validity (regex) for each argument
+#   auth_CMD(): authorization
+#   task_CMD(): DB + FS transaction
+#     DB operations come first because FS operations can't be reverted.
+#     State will be left inconsistent when FS fails.
 
 def valid_help():
     return
@@ -1115,8 +1042,6 @@ def valid_delete_own_guest(guest):
     need_not_root()
     need_valid_username(guest)
 
-#
-
 def auth_help():
     return
 
@@ -1208,8 +1133,6 @@ def auth_create_own_guest(guest, desc, keytype, key, comment):
 
 def auth_delete_own_guest(guest):
     require_host_of_guest(guest)
-
-#
 
 def task_help():
     return [[commands_listing]]
@@ -1336,7 +1259,6 @@ def run_cmd_array(args):
         user = args[1]
         args = args[2:]
 
-    # prefer dash over underscore any time!
     cmdlow = args[0].replace('-', '_')
 
     auth  = globals().get('auth_'  + cmdlow)
@@ -1368,17 +1290,15 @@ def run_cmd_array(args):
         r = run_transaction(execute)
 
         if r is not None:
-            sys.stdout.write(format_table(r))
+            if is_stdout_tty:
+                out = format_table(r)
+            else:
+                out = ''.join('\t'.join(c for c in r) + '\n' for r in rs)
+            sys.stdout.write(out)
     finally:
         loguser = realuser
 
-# **********************************************************************
-# Interactive shell
-# **********************************************************************
-
 class GitAdminShell(cmd.Cmd):
-    # Sorry to say it, but cmd.Cmd is not a good API
-
     intro = shell_intro
     prompt = shell_prompt
 
@@ -1395,25 +1315,22 @@ class GitAdminShell(cmd.Cmd):
         else:
             print("Logged in as {}".format(loguser), file=sys.stderr)
 
-    # We need to override this method because the default is to repeat
-    # the last command.
+    # Override this method because the default is to repeat the last command.
     def emptyline(self):
         pass
 
-    # 'EOF' (a string) is used to indicate EOF on stdin.
-    # And why do we need to handle this at all by default?
     def default(self, line):
+        # 'EOF' (a string) is used to indicate EOF on stdin.
+        # And why do we need to handle this at all by default?
         if line in ['EOF', 'exit', 'quit']:
-            # On EOF, before exiting, end the line which the prompt started.
             if line == 'EOF':
-                print('', file=sys.stderr)
+                print(file=sys.stderr)
             # indicate that the interpreter should be ended
             return True
         else:
             run_cmd_array(need_cmd_array(line))
 
-    # We must override this method to be able to handle exceptions from
-    # executed commands
+    # Override this method to be able to handle exceptions from commands
     def onecmd(self, line):
         try:
             # All commands should return None, except default() above where we
@@ -1427,22 +1344,19 @@ class GitAdminShell(cmd.Cmd):
             print("ERROR: {}".format(e), file=sys.stderr)
             return False
 
-    # We must override this method because keyboard interrupts at the prompt
-    # can't be handled in onecmd(). This will cost some stack space, but who
-    # cares.
+    # Override this method because keyboard interrupts at the prompt
+    # can't be handled in onecmd()
     def cmdloop(self):
-        try:
-            return super().cmdloop()
-        except KeyboardInterrupt as e:
-            # start a new line
-            print(file=sys.stderr)
-            # before looping again, make sure intro won't be displayed again.
-            self.intro = None
-            return self.cmdloop()
+        while True:
+            try:
+                return super().cmdloop()
+            except KeyboardInterrupt as e:
+                print(file=sys.stderr)
+                # make sure intro won't be displayed again.
+                self.intro = None
 
 # By default, the built-in do_help command prints a barely useful compilation of
-# registered do_* commands. Also, "help" is autocompleted. Don't tell anyone
-# what we're doing here!
+# registered do_* commands. Also, "help" is autocompleted. This is evil:
 delattr(cmd.Cmd, 'do_help')
 
 # **********************************************************************
