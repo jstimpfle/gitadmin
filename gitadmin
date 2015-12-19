@@ -1258,6 +1258,8 @@ def run_cmd_array(args):
     if user is None and len(args) >= 2 and args[0] == 'su':
         user = args[1]
         args = args[2:]
+        if not args:
+            raise GA_Invalid('"su" needs a command to run: su <user> <cmd...>')
 
     cmdlow = args[0].replace('-', '_')
 
