@@ -1289,11 +1289,11 @@ def run_cmd_array(args):
         def execute():
             auth(*args[1:])
             return task(*args[1:])
-        r = run_transaction(execute)
+        rs = run_transaction(execute)
 
-        if r is not None:
+        if rs is not None:
             if is_stdout_tty:
-                out = format_table(r)
+                out = format_table(rs)
             else:
                 out = ''.join('\t'.join(c for c in r) + '\n' for r in rs)
             sys.stdout.write(out)
